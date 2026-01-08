@@ -2,8 +2,8 @@ name: Parse HH Jobs
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Каждый день в 08:00 UTC (11:00 МСК)
-  workflow_dispatch:      # Ручной запуск
+    - cron: '0 6 * * *'  # 06:00 UTC = 09:00 МСК (зима)
+  workflow_dispatch:
 
 jobs:
   parse:
@@ -14,7 +14,7 @@ jobs:
       uses: actions/checkout@v3
     
     - name: 🐍 Setup Python
-      uses: actions/supabase-python@v4
+      uses: actions/setup-python@v4  # ИСПРАВЛЕНО!
       with:
         python-version: '3.10'
     
@@ -27,10 +27,14 @@ jobs:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       run: |
-        echo "Начинаем парсинг..."
+        echo "=== НАЧАЛО ПАРСИНГА ==="
+        echo "Дата: $(date)"
+        echo "Время UTC: $(date -u '+%H:%M')"
+        echo "Время МСК: $(TZ='Europe/Moscow' date '+%H:%M')"
+        echo "======================="
         python scripts/parser.py
     
-    - name: ✅ Completion
+    - name: 📊 Логирование результата
       run: |
-        echo "Парсинг завершен!"
-        echo "Данные сохранены в Supabase"
+        echo "✅ Парсинг завершен"
+        echo "🔄 Следующий запуск: завтра в 06:00 UTC (09:00 МСК)"
