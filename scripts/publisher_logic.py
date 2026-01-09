@@ -276,7 +276,7 @@ def format_post_with_vacancies(vacancies: List[Dict], city_name: str) -> Tuple[s
     # Форматируем вакансии
     vacancy_sections = []
     for i, vacancy in enumerate(vacancies, 1):
-        vacancy_text = f"<b>{i}. {vacancy['title']} в {vacancy['employer']}</b>\n"
+        vacancy_text = f"<b>{i}. {vacancy['title']} в {vacancy['employer']}</b>\n\n"
         
         # Зарплата
         salary_display = format_salary_display(vacancy)
