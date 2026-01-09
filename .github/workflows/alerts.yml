@@ -3,7 +3,7 @@ name: Alert System
 on:
   # 1. Слушаем события от существующих workflows
   workflow_run:
-    workflows: ["Parse Vacancies", "Publish Vacancies"]  # Имена твоих workflow
+    workflows: ["Parse HH Jobs", "Publish Vacancies to Telegram"]  # Имена твоих workflow
     types: [requested, completed, in_progress]
   
   # 2. Ручной запуск для тестов
