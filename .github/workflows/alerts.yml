@@ -1,0 +1,110 @@
+name: Alert System
+
+on:
+  # 1. Слушаем события от существующих workflows
+  workflow_run:
+    workflows: ["Parse Vacancies", "Publish Vacancies"]  # Имена твоих workflow
+    types: [requested, completed, in_progress]
+  
+  # 2. Ручной запуск для тестов
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Тип теста'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - parser
+        - publisher
+        - error
+      message:
+        description: 'Кастомное сообщение'
+        required: false
+        type: string
+  
+  # 3. По расписанию для heartbeat (опционально)
+  schedule:
+    # Каждый день в 10:00 UTC (13:00 МСК) heartbeat
+    - cron: '0 10 * * *'
+
+jobs:
+  # Job 1: Обработка событий от workflows
+  handle-workflow-event:
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    name: "Alert: ${{ github.event.workflow.name }} - ${{ github.event.workflow_run.status }}"
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: pip install requests
+        
+      - name: Handle workflow event
+        env:
+          TG_ALERT_BOT_TOKEN: ${{ secrets.TG_ALERT_BOT_TOKEN }}
+          TG_ALERT_CHAT_ID: ${{ secrets.TG_ALERT_CHAT_ID }}
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+          EVENT_CONTEXT: ${{ toJson(github.event) }}
+        run: |
+          python scripts/alert_handler.py
+  
+  # Job 2: Ручной тест системы алертов
+  manual-test:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: "Manual Alert Test"
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: pip install requests
+        
+      - name: Run alert tests
+        env:
+          TG_ALERT_BOT_TOKEN: ${{ secrets.TG_ALERT_BOT_TOKEN }}
+          TG_ALERT_CHAT_ID: ${{ secrets.TG_ALERT_CHAT_ID }}
+          TEST_TYPE: ${{ github.event.inputs.test_type }}
+          CUSTOM_MESSAGE: ${{ github.event.inputs.message }}
+        run: |
+          python scripts/test_alerts.py
+  
+  # Job 3: Heartbeat - проверка что система жива
+  heartbeat:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    name: "Heartbeat Check"
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: pip install requests
+        
+      - name: Send heartbeat
+        env:
+          TG_ALERT_BOT_TOKEN: ${{ secrets.TG_ALERT_BOT_TOKEN }}
+          TG_ALERT_CHAT_ID: ${{ secrets.TG_ALERT_CHAT_ID }}
+        run: |
+          python scripts/heartbeat.py
