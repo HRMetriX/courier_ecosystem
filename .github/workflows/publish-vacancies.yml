@@ -3,10 +3,10 @@ name: Publish Vacancies to Telegram
 
 on:
   schedule:
-    # 13:00, 19:00, 21:00 по Москве (UTC+3)
-    - cron: '0 10,16,18 * * *'
+    # 13:00, 19:00, 21:00 по Москве (UTC+3 = GMT+3)
+    - cron: '0 10,16,18 * * *'  # 10:00, 16:00, 18:00 UTC = 13:00, 19:00, 21:00 MSK
   workflow_dispatch:  # Ручной запуск
-  # Запуск после успешного парсинга
+  # Запуск после успешного парсинга (опционально)
   workflow_run:
     workflows: ["Parse HH Jobs"]
     types:
@@ -15,37 +15,56 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' || github.event_name != 'workflow_run' }}
+    timeout-minutes: 10
+    
+    # Запускаем только если:
+    # 1. Ручной запуск (workflow_dispatch)
+    # 2. По расписанию (schedule)
+    # 3. После успешного парсинга (workflow_run с conclusion=success)
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+        cache: 'pip'
     
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install supabase requests python-dotenv
+        # Используем существующие зависимости
+        pip install requests==2.31.0 supabase==1.1.1 python-dateutil==2.8.2
     
-    - name: Debug - List secrets (for debugging)
+    - name: Debug - Check environment
       if: ${{ github.event_name == 'workflow_dispatch' }}
       run: |
-        echo "Checking secrets availability..."
-        echo "SUPABASE_URL exists: ${{ secrets.SUPABASE_URL != '' }}"
-        echo "SUPABASE_KEY exists: ${{ secrets.SUPABASE_KEY != '' }}"
-        echo "TG_BOT_TOKEN exists: ${{ secrets.TG_BOT_TOKEN != '' }}"
+        echo "🔧 Отладочная информация:"
+        echo "Тиггер: ${{ github.event_name }}"
+        echo "Рабочая директория: $(pwd)"
+        echo "Содержимое scripts/:"
+        ls -la scripts/
+        echo ""
+        echo "Python информация:"
+        python --version
+        pip list | grep -E "(supabase|requests)"
     
     - name: Run publisher
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}  # Используем SUPABASE_KEY, а не SERVICE_ROLE
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       run: |
-        echo "Running publisher..."
+        echo "🚀 Запуск публикатора..."
+        echo "Рабочая директория: $(pwd)"
         python scripts/publisher_logic.py
     
     - name: Send notification on failure
@@ -55,5 +74,6 @@ jobs:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         SLACK_CHANNEL: alerts
         SLACK_COLOR: danger
-        SLACK_TITLE: "Публикация вакансий завершилась ошибкой"
-        SLACK_MESSAGE: "Workflow: ${{ github.workflow }} failed. Check GitHub Actions logs."
+        SLACK_TITLE: "❌ Публикация вакансий завершилась ошибкой"
+        SLACK_MESSAGE: "Workflow ${{ github.workflow }} завершился с ошибкой. Проверьте логи в GitHub Actions."
+        SLACK_FOOTER: "Repository: ${{ github.repository }}"
