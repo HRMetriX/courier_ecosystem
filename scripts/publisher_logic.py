@@ -63,6 +63,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def should_publish_now() -> bool:
+    """
+    Проверяет, нужно ли публиковать сейчас по московскому времени.
+    
+    В GitHub Actions всегда возвращает True, так как триггер уже настроен.
+    Для локального тестирования можно использовать проверку времени.
+    """
+    # Для GitHub Actions всегда публикуем
+    if "GITHUB_ACTIONS" in os.environ:
+        logger.info("📱 Режим GitHub Actions - публикация разрешена")
+        return True
+    
+    # Для локального тестирования проверяем время
+    try:
+        post_times = PUBLISH_CONFIG["publication"]["post_times_msk"]
+        now_msk = datetime.now(timezone(timedelta(hours=3)))
+        current_time = now_msk.strftime("%H:%M")
+        
+        logger.info(f"⏰ Текущее время (Мск): {current_time}")
+        logger.info(f"⏰ Время публикации по расписанию: {', '.join(post_times)}")
+        
+        for scheduled_time in post_times:
+            try:
+                scheduled_hour, scheduled_minute = map(int, scheduled_time.split(":"))
+                scheduled_dt = now_msk.replace(hour=scheduled_hour, minute=scheduled_minute, second=0)
+                
+                time_diff = abs((now_msk - scheduled_dt).total_seconds() / 60)
+                
+                if time_diff <= 10:  # +-10 минут
+                    logger.info(f"✅ Время для публикации! (+/-10 минут от {scheduled_time})")
+                    return True
+            except (ValueError, AttributeError):
+                continue
+        
+        logger.info("⏸️  Не время для публикации по расписанию")
+        return False
+        
+    except Exception as e:
+        logger.warning(f"⚠️  Ошибка проверки времени: {e}")
+        # В случае ошибки - разрешаем публикацию
+        return True
+
 
 def get_vacancies_for_publication(
     supabase_client: Client,
@@ -383,50 +425,6 @@ def publish_city_vacancies(
     except Exception as e:
         logger.error(f"Критическая ошибка при публикации {city_slug}: {str(e)}")
         return False, f"Критическая ошибка: {str(e)}", 0
-
-
-def should_publish_now() -> bool:
-    """
-    Проверяет, нужно ли публиковать сейчас по московскому времени.
-    
-    В GitHub Actions всегда возвращает True, так как триггер уже настроен.
-    Для локального тестирования можно использовать проверку времени.
-    """
-    # Для GitHub Actions всегда публикуем
-    if "GITHUB_ACTIONS" in os.environ:
-        logger.info("📱 Режим GitHub Actions - публикация разрешена")
-        return True
-    
-    # Для локального тестирования проверяем время
-    try:
-        post_times = PUBLISH_CONFIG["publication"]["post_times_msk"]
-        now_msk = datetime.now(timezone(timedelta(hours=3)))
-        current_time = now_msk.strftime("%H:%M")
-        
-        logger.info(f"⏰ Текущее время (Мск): {current_time}")
-        logger.info(f"⏰ Время публикации по расписанию: {', '.join(post_times)}")
-        
-        for scheduled_time in post_times:
-            try:
-                scheduled_hour, scheduled_minute = map(int, scheduled_time.split(":"))
-                scheduled_dt = now_msk.replace(hour=scheduled_hour, minute=scheduled_minute, second=0)
-                
-                time_diff = abs((now_msk - scheduled_dt).total_seconds() / 60)
-                
-                if time_diff <= 10:  # +-10 минут
-                    logger.info(f"✅ Время для публикации! (+/-10 минут от {scheduled_time})")
-                    return True
-            except (ValueError, AttributeError):
-                continue
-        
-        logger.info("⏸️  Не время для публикации по расписанию")
-        return False
-        
-    except Exception as e:
-        logger.warning(f"⚠️  Ошибка проверки времени: {e}")
-        # В случае ошибки - разрешаем публикацию
-        return True
-
 
 def main_publisher() -> Tuple[bool, Dict[str, int]]:
     """
