@@ -394,7 +394,7 @@ def publish_to_telegram(
             "chat_id": channel_id,
             "text": post_text,
             "parse_mode": "HTML",
-            "disable_web_page_preview": False,  # Разрешаем превью для реферальной ссылки
+            "disable_web_page_preview": True,  # Разрешаем превью для реферальной ссылки
         }
         
         if reply_markup:
