@@ -45,7 +45,7 @@ jobs:
         pip install requests==2.31.0 supabase==1.1.1 python-dateutil==2.8.2
     
     - name: Debug - Check project structure
-      if: ${{ github.event_name == 'workflow_dispatch' }}
+      if: github.event_name == 'workflow_dispatch'
       run: |
         echo "🔧 Проверка структуры проекта:"
         echo "Текущая директория: $(pwd)"
@@ -72,7 +72,8 @@ jobs:
         python scripts/publisher_logic.py
     
     - name: Send notification on failure
-      if: failure() && secrets.SLACK_WEBHOOK != ''
+      # Используем правильный синтаксис для проверки secrets
+      if: ${{ failure() && secrets.SLACK_WEBHOOK != '' }}
       uses: rtCamp/action-slack-notify@v2
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
