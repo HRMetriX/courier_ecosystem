@@ -1,110 +1,97 @@
 name: Alert System
 
 on:
-  # 1. Слушаем события от существующих workflows
+  # 1. Слушаем запуски parse и publish workflow
   workflow_run:
-    workflows: ["Parse HH Jobs", "Publish Vacancies to Telegram"]  # Имена твоих workflow
-    types: [requested, completed, in_progress]
-  
-  # 2. Ручной запуск для тестов
+    workflows: 
+      - "Parse HH vacancies"    # ЗАМЕНИ НА ТОЧНОЕ ИМЯ ТВОЕГО PARSE WORKFLOW
+      - "Publish vacancies"     # ЗАМЕНИ НА ТОЧНОЕ ИМЯ ТВОЕГО PUBLISH WORKFLOW
+    types: 
+      - requested    # Когда запускается
+      - completed    # Когда завершается
+
+  # 2. Ручной тест
   workflow_dispatch:
     inputs:
-      test_type:
-        description: 'Тип теста'
-        required: false
-        default: 'all'
-        type: choice
-        options:
-        - all
-        - parser
-        - publisher
-        - error
       message:
-        description: 'Кастомное сообщение'
+        description: 'Тестовое сообщение'
         required: false
+        default: 'Тест системы алертов'
         type: string
-  
-  # 3. По расписанию для heartbeat (опционально)
-  schedule:
-    # Каждый день в 10:00 UTC (13:00 МСК) heartbeat
-    - cron: '0 10 * * *'
 
 jobs:
-  # Job 1: Обработка событий от workflows
-  handle-workflow-event:
-    if: github.event_name == 'workflow_run'
+  handle-alerts:
     runs-on: ubuntu-latest
-    name: "Alert: ${{ github.event.workflow.name }} - ${{ github.event.workflow_run.status }}"
     
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-        
+      
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          
-      - name: Install dependencies
+      
+      - name: Install requests
         run: pip install requests
-        
-      - name: Handle workflow event
-        env:
-          TG_ALERT_BOT_TOKEN: ${{ secrets.TG_ALERT_BOT_TOKEN }}
-          TG_ALERT_CHAT_ID: ${{ secrets.TG_ALERT_CHAT_ID }}
-          GITHUB_CONTEXT: ${{ toJson(github) }}
-          EVENT_CONTEXT: ${{ toJson(github.event) }}
-        run: |
-          python scripts/alert_handler.py
-  
-  # Job 2: Ручной тест системы алертов
-  manual-test:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    name: "Manual Alert Test"
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
-        run: pip install requests
-        
-      - name: Run alert tests
-        env:
-          TG_ALERT_BOT_TOKEN: ${{ secrets.TG_ALERT_BOT_TOKEN }}
-          TG_ALERT_CHAT_ID: ${{ secrets.TG_ALERT_CHAT_ID }}
-          TEST_TYPE: ${{ github.event.inputs.test_type }}
-          CUSTOM_MESSAGE: ${{ github.event.inputs.message }}
-        run: |
-          python scripts/test_alerts.py
-  
-  # Job 3: Heartbeat - проверка что система жива
-  heartbeat:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    name: "Heartbeat Check"
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
-        run: pip install requests
-        
-      - name: Send heartbeat
+      
+      - name: Send alert
         env:
           TG_ALERT_BOT_TOKEN: ${{ secrets.TG_ALERT_BOT_TOKEN }}
           TG_ALERT_CHAT_ID: ${{ secrets.TG_ALERT_CHAT_ID }}
         run: |
-          python scripts/heartbeat.py
+          # Для workflow_run событий
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            WORKFLOW_NAME="${{ github.event.workflow.name }}"
+            STATUS="${{ github.event.workflow_run.status }}"
+            CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+            
+            python -c "
+import os, sys, json
+sys.path.append('scripts')
+from alert_sender import send_alert
+
+workflow_name = '''$WORKFLOW_NAME'''
+status = '''$STATUS'''
+conclusion = '''$CONCLUSION'''
+
+if 'parse' in workflow_name.lower():
+    ctx = 'parser'
+    emoji = '🔍'
+elif 'publish' in workflow_name.lower():
+    ctx = 'publisher'
+    emoji = '📢'
+else:
+    ctx = 'system'
+    emoji = '⚙️'
+
+if status == 'requested':
+    send_alert(f'{emoji} {workflow_name} запущен', 
+               alert_type='start', 
+               context=ctx)
+elif status == 'completed':
+    if conclusion == 'success':
+        send_alert(f'{emoji} {workflow_name} успешно завершен',
+                   alert_type='success',
+                   context=ctx)
+    else:
+        send_alert(f'{emoji} {workflow_name} завершен с ошибкой',
+                   details=f'Статус: {conclusion}',
+                   alert_type='error',
+                   context=ctx)
+            "
+          
+          # Для ручного запуска
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            MESSAGE="${{ github.event.inputs.message }}"
+            
+            python -c "
+import os, sys
+sys.path.append('scripts')
+from alert_sender import send_alert
+send_alert('''$MESSAGE''', 
+           details='Ручной тест из GitHub Actions',
+           alert_type='info',
+           context='system')
+            "
+          fi
