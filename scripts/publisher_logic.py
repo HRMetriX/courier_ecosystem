@@ -11,16 +11,16 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(script_dir)
 
 try:
-    # Пытаемся импортировать из scripts/config.py
-    from config import PUBLISH_CONFIG, CITIES
+    # Пытаемся импортировать из scripts/publisher_config.py
+    from publisher_config import PUBLISH_CONFIG, CITIES
     logger_ready = True
 except ImportError as e:
-    # Если нет config.py, используем fallback конфиг
+    # Если нет publisher_config.py, используем fallback конфиг
     logger_ready = False
     # Сначала настроим минимальный логгер для вывода ошибки
     logging.basicConfig(level=logging.ERROR)
     temp_logger = logging.getLogger(__name__)
-    temp_logger.error(f"Не удалось импортировать config: {e}")
+    temp_logger.error(f"Не удалось импортировать publisher_config: {e}")
     temp_logger.info("Используется fallback конфигурация...")
 
 # Теперь настраиваем полноценное логирование
@@ -54,13 +54,6 @@ if not logger_ready:
                 "payment": "💳",
                 "employer": "✅",
                 "divider": "---",
-                "verified": "✅",
-                "location": "📍",
-                "schedule": "🕒",
-                "experience": "📊",
-                "employment": "📝",
-                "skills": "🎯",
-                "license": "🚗",
             },
             "referral_link": "https://ya.cc/8UiUqj",
         }
@@ -138,10 +131,10 @@ def get_vacancies_for_publication(
     """
     Получает вакансии для публикации.
     
-    Критерии:
+    Критерии из publisher_config.py:
     1. is_posted = FALSE
-    2. published_at не старше 30 дней
-    3. created_at (парсинг) не старше 7 дней
+    2. published_at не старше max_vacancy_age_days (30 дней)
+    3. created_at не старше max_parsed_age_days (7 дней)
     4. currency = 'RUR'
     """
     
