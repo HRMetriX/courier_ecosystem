@@ -1,23 +1,16 @@
 name: Alert System
 
 on:
-  # 1. Слушаем запуски parse и publish workflow
+  # Слушаем ОБА workflow как они есть
   workflow_run:
     workflows: 
-      - "Parse HH vacancies"    # ЗАМЕНИ НА ТОЧНОЕ ИМЯ ТВОЕГО PARSE WORKFLOW
-      - "Publish vacancies"     # ЗАМЕНИ НА ТОЧНОЕ ИМЯ ТВОЕГО PUBLISH WORKFLOW
+      - "Parse HH Jobs"                # ТОЧНО так как в списке
+      - "Publish Vacancies to Telegram" # ТОЧНО так как в списке
     types: 
-      - requested    # Когда запускается
-      - completed    # Когда завершается
+      - requested
+      - completed
 
-  # 2. Ручной тест
-  workflow_dispatch:
-    inputs:
-      message:
-        description: 'Тестовое сообщение'
-        required: false
-        default: 'Тест системы алертов'
-        type: string
+  workflow_dispatch: {}
 
 jobs:
   handle-alerts:
@@ -40,58 +33,9 @@ jobs:
           TG_ALERT_BOT_TOKEN: ${{ secrets.TG_ALERT_BOT_TOKEN }}
           TG_ALERT_CHAT_ID: ${{ secrets.TG_ALERT_CHAT_ID }}
         run: |
-          # Для workflow_run событий
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            WORKFLOW_NAME="${{ github.event.workflow.name }}"
-            STATUS="${{ github.event.workflow_run.status }}"
-            CONCLUSION="${{ github.event.workflow_run.conclusion }}"
-            
-            python -c "
-import os, sys, json
-sys.path.append('scripts')
-from alert_sender import send_alert
-
-workflow_name = '''$WORKFLOW_NAME'''
-status = '''$STATUS'''
-conclusion = '''$CONCLUSION'''
-
-if 'parse' in workflow_name.lower():
-    ctx = 'parser'
-    emoji = '🔍'
-elif 'publish' in workflow_name.lower():
-    ctx = 'publisher'
-    emoji = '📢'
-else:
-    ctx = 'system'
-    emoji = '⚙️'
-
-if status == 'requested':
-    send_alert(f'{emoji} {workflow_name} запущен', 
-               alert_type='start', 
-               context=ctx)
-elif status == 'completed':
-    if conclusion == 'success':
-        send_alert(f'{emoji} {workflow_name} успешно завершен',
-                   alert_type='success',
-                   context=ctx)
-    else:
-        send_alert(f'{emoji} {workflow_name} завершен с ошибкой',
-                   details=f'Статус: {conclusion}',
-                   alert_type='error',
-                   context=ctx)
-            "
+          echo "Событие: ${{ github.event_name }}"
+          echo "Workflow: ${{ github.event.workflow.name }}"
+          echo "Статус: ${{ github.event.workflow_run.status }}"
+          echo "Результат: ${{ github.event.workflow_run.conclusion }}"
           
-          # Для ручного запуска
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            MESSAGE="${{ github.event.inputs.message }}"
-            
-            python -c "
-import os, sys
-sys.path.append('scripts')
-from alert_sender import send_alert
-send_alert('''$MESSAGE''', 
-           details='Ручной тест из GitHub Actions',
-           alert_type='info',
-           context='system')
-            "
-          fi
+          python scripts/alert_handler.py
