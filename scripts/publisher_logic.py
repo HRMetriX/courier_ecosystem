@@ -5,15 +5,36 @@ import sys
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
-from supabase import create_client, Client
 
-# Добавляем путь к корню проекта для импорта конфигов
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Добавляем путь к текущей директории для импорта config
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(script_dir)
 
 try:
-    from config.publisher_config import PUBLISH_CONFIG, CITIES
-except ImportError:
-    # Fallback конфиг если не удалось импортировать
+    # Пытаемся импортировать из scripts/config.py
+    from config import PUBLISH_CONFIG, CITIES
+    logger_ready = True
+except ImportError as e:
+    # Если нет config.py, используем fallback конфиг
+    logger_ready = False
+    # Сначала настроим минимальный логгер для вывода ошибки
+    logging.basicConfig(level=logging.ERROR)
+    temp_logger = logging.getLogger(__name__)
+    temp_logger.error(f"Не удалось импортировать config: {e}")
+    temp_logger.info("Используется fallback конфигурация...")
+
+# Теперь настраиваем полноценное логирование
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Fallback конфиг если не удалось импортировать
+if not logger_ready:
     PUBLISH_CONFIG = {
         "criteria": {
             "max_vacancy_age_days": 30,
@@ -52,16 +73,19 @@ except ImportError:
         "ekb": {"channel": "@courier_jobs_ekb", "name": "Екатеринбург"},
         "kzn": {"channel": "@courier_jobs_kzn", "name": "Казань"},
     }
+    logger.info("Используется fallback конфигурация")
 
-# Настройка логирования для GitHub Actions
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+# Импортируем supabase после настройки логирования
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError as e:
+    logger.error(f"Не удалось импортировать supabase: {e}")
+    SUPABASE_AVAILABLE = False
+    # Создаем заглушку для типа
+    from typing import Any
+    Client = Any
+
 
 def should_publish_now() -> bool:
     """
@@ -125,6 +149,12 @@ def get_vacancies_for_publication(
     now = datetime.now(timezone.utc)
     max_vacancy_date = now - timedelta(days=PUBLISH_CONFIG["criteria"]["max_vacancy_age_days"])
     max_parsed_date = now - timedelta(days=PUBLISH_CONFIG["criteria"]["max_parsed_age_days"])
+    
+    logger.info(f"Критерии отбора для {city_slug}:")
+    logger.info(f"  - published_at >= {max_vacancy_date.strftime('%Y-%m-%d')}")
+    logger.info(f"  - created_at >= {max_parsed_date.strftime('%Y-%m-%d')}")
+    logger.info(f"  - currency = 'RUR'")
+    logger.info(f"  - is_posted = FALSE")
     
     # Строим запрос
     query = (
@@ -380,6 +410,8 @@ def publish_city_vacancies(
         
         vacancies_per_post = PUBLISH_CONFIG["publication"]["vacancies_per_post"]
         
+        logger.info(f"Ищу до {vacancies_per_post} вакансий для {city_info['name']}...")
+        
         # Получаем вакансии для публикации
         vacancies = get_vacancies_for_publication(
             supabase_client, 
@@ -388,6 +420,7 @@ def publish_city_vacancies(
         )
         
         if not vacancies:
+            logger.info(f"Нет новых вакансий для публикации в {city_info['name']}")
             return True, f"Нет новых вакансий для {city_info['name']}", 0
         
         logger.info(f"Найдено {len(vacancies)} вакансий для публикации в {city_info['name']}")
@@ -398,6 +431,8 @@ def publish_city_vacancies(
             city_info['name']
         )
         
+        logger.info(f"Публикую в Telegram канал: {city_info['channel']}")
+        
         # Публикуем в Telegram
         success = publish_to_telegram(
             bot_token,
@@ -407,6 +442,7 @@ def publish_city_vacancies(
         )
         
         if not success:
+            logger.error(f"Не удалось опубликовать в {city_info['channel']}")
             return False, f"Ошибка публикации в {city_info['name']}", 0
         
         # Помечаем вакансии как опубликованные
@@ -424,7 +460,10 @@ def publish_city_vacancies(
         
     except Exception as e:
         logger.error(f"Критическая ошибка при публикации {city_slug}: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False, f"Критическая ошибка: {str(e)}", 0
+
 
 def main_publisher() -> Tuple[bool, Dict[str, int]]:
     """
@@ -436,49 +475,35 @@ def main_publisher() -> Tuple[bool, Dict[str, int]]:
     """
     # Получаем конфигурацию из переменных окружения
     supabase_url = os.environ.get("SUPABASE_URL")
-    supabase_key = os.environ.get("SUPABASE_KEY")  # Используем SUPABASE_KEY
+    supabase_key = os.environ.get("SUPABASE_KEY")
     bot_token = os.environ.get("TG_BOT_TOKEN")
     
+    logger.info("=" * 60)
+    logger.info("🚀 ЗАПУСК ПУБЛИКАТОРА ВАКАНСИЙ")
+    logger.info(f"   Дата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
+    logger.info(f"   Режим: {'GitHub Actions' if 'GITHUB_ACTIONS' in os.environ else 'Локальный'}")
+    logger.info(f"   Триггер: {os.environ.get('GITHUB_EVENT_NAME', 'Неизвестно')}")
+    logger.info("=" * 60)
+    
     # Подробное логирование переменных окружения
-    logger.info("=" * 60)
-    logger.info("ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ:")
-    logger.info(f"SUPABASE_URL: {'*** УСТАНОВЛЕНА ***' if supabase_url else '❌ ОТСУТСТВУЕТ'}")
-    logger.info(f"SUPABASE_KEY: {'*** УСТАНОВЛЕНА ***' if supabase_key else '❌ ОТСУТСТВУЕТ'}")
-    logger.info(f"TG_BOT_TOKEN: {'*** УСТАНОВЛЕНА ***' if bot_token else '❌ ОТСУТСТВУЕТ'}")
+    logger.info("🔧 ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ:")
+    logger.info(f"  SUPABASE_URL: {'✅ УСТАНОВЛЕНА' if supabase_url else '❌ ОТСУТСТВУЕТ'}")
+    logger.info(f"  SUPABASE_KEY: {'✅ УСТАНОВЛЕНА' if supabase_key else '❌ ОТСУТСТВУЕТ'}")
+    logger.info(f"  TG_BOT_TOKEN: {'✅ УСТАНОВЛЕНА' if bot_token else '❌ ОТСУТСТВУЕТ'}")
     
-    # Выводим список всех переменных окружения для отладки
-    logger.info("\nВСЕ ПЕРЕМЕННЫЕ С 'SUPABASE' ИЛИ 'TG':")
-    for key in sorted(os.environ.keys()):
-        if "SUPABASE" in key.upper() or "TG_" in key.upper():
-            value = os.environ[key]
-            masked_value = '***' + value[-4:] if value and ('KEY' in key or 'TOKEN' in key) else value
-            logger.info(f"  {key}: {masked_value}")
-    logger.info("=" * 60)
-    
-    # Проверяем обязательные переменные
-    if not supabase_url:
-        logger.error("❌ ОШИБКА: Не установлена переменная SUPABASE_URL")
-        logger.error("   Как исправить: добавьте SUPABASE_URL в GitHub Secrets")
+    if not supabase_url or not supabase_key or not bot_token:
+        logger.error("❌ ОШИБКА: Не все обязательные переменные установлены")
         return False, {}
-    
-    if not supabase_key:
-        logger.error("❌ ОШИБКА: Не установлена переменная SUPABASE_KEY")
-        logger.error("   Как исправить: добавьте SUPABASE_KEY в GitHub Secrets")
-        logger.error("   Проверьте имя переменной: должно быть 'SUPABASE_KEY', не 'SUPABASE_SERVICE_ROLE_KEY'")
-        return False, {}
-    
-    if not bot_token:
-        logger.error("❌ ОШИБКА: Не установлена переменная TG_BOT_TOKEN")
-        logger.error("   Как исправить: добавьте TG_BOT_TOKEN в GitHub Secrets")
-        return False, {}
-    
-    logger.info("✅ Все необходимые переменные окружения установлены")
     
     # Проверяем, нужно ли публиковать (только для локального запуска)
     if not should_publish_now():
         logger.info("⏸️  Не время для публикации по расписанию")
-        logger.info("   Запуск будет пропущен (в GitHub Actions всегда публикуем)")
         return True, {}
+    
+    # Проверяем доступность supabase
+    if not SUPABASE_AVAILABLE:
+        logger.error("❌ ОШИБКА: Библиотека supabase не установлена")
+        return False, {}
     
     # Подключаемся к Supabase
     try:
@@ -488,20 +513,13 @@ def main_publisher() -> Tuple[bool, Dict[str, int]]:
         # Делаем тестовый запрос для проверки подключения
         test_result = supabase_client.table("vacancies").select("id", count="exact").limit(1).execute()
         logger.info(f"✅ Успешное подключение к Supabase")
-        logger.info(f"   Тестовый запрос: {test_result.count if hasattr(test_result, 'count') else 'OK'}")
         
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к Supabase: {str(e)}")
-        logger.error("   Проверьте:")
-        logger.error("   1. Правильность SUPABASE_URL")
-        logger.error("   2. Правильность SUPABASE_KEY")
-        logger.error("   3. Доступность базы данных")
-        logger.error("   4. Права доступа ключа")
         return False, {}
     
     # Публикуем для каждого города
-    logger.info(f"\n🚀 Начинаем публикацию для {len(CITIES)} городов")
-    logger.info(f"   Время публикации: {datetime.now(timezone(timedelta(hours=3))).strftime('%H:%M %d.%m.%Y')}")
+    logger.info(f"\n📍 ПУБЛИКАЦИЯ ДЛЯ {len(CITIES)} ГОРОДОВ")
     
     results = {}
     all_success = True
@@ -509,7 +527,7 @@ def main_publisher() -> Tuple[bool, Dict[str, int]]:
     
     for city_slug in CITIES.keys():
         city_name = CITIES[city_slug]["name"]
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'='*50}")
         logger.info(f"📍 ГОРОД: {city_name.upper()} ({city_slug})")
         logger.info(f"   Канал: {CITIES[city_slug]['channel']}")
         
@@ -524,11 +542,11 @@ def main_publisher() -> Tuple[bool, Dict[str, int]]:
         
         if success:
             if count > 0:
-                logger.info(f"✅ УСПЕХ: {message}")
+                logger.info(f"✅ {message}")
             else:
-                logger.info(f"ℹ️  ИНФО: {message}")
+                logger.info(f"ℹ️  {message}")
         else:
-            logger.error(f"❌ ОШИБКА: {message}")
+            logger.error(f"❌ {message}")
             all_success = False
         
         # Небольшая задержка между городами
@@ -551,16 +569,9 @@ def main_publisher() -> Tuple[bool, Dict[str, int]]:
     
     if total_vacancies == 0:
         logger.info("ℹ️  Новых вакансий для публикации не найдено")
-        logger.info("   Возможные причины:")
-        logger.info("   1. Все вакансии уже опубликованы (is_posted = TRUE)")
-        logger.info("   2. Нет новых вакансий за последние 7 дней")
-        logger.info("   3. Вакансии не в рублях (currency != 'RUR')")
-        logger.info("   4. Ошибка в критериях отбора")
     
     logger.info(f"{'='*60}")
     
-    # Даже если нет вакансий для публикации - это не ошибка
-    # Главное что процесс выполнился корректно
     return all_success, results
 
 
@@ -569,12 +580,6 @@ if __name__ == "__main__":
     Точка входа для запуска из командной строки.
     """
     import sys
-    
-    logger.info("\n" + "="*60)
-    logger.info("🚀 ЗАПУСК ПУБЛИКАТОРА ВАКАНСИЙ")
-    logger.info(f"   Дата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
-    logger.info(f"   Режим: {'GitHub Actions' if 'GITHUB_ACTIONS' in os.environ else 'Локальный'}")
-    logger.info("="*60)
     
     # Запускаем публикацию
     success, stats = main_publisher()
