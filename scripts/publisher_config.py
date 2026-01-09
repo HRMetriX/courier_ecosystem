@@ -8,12 +8,12 @@ PUBLISH_CONFIG = {
         "max_vacancy_age_days": 30,      # Не старше 30 дней с published_at
         "max_parsed_age_days": 7,        # Не старше 7 дней с created_at (парсинга)
         "currency": "RUR",               # Только рубли
-        "min_salary_net": 70000,         # Минимум 70к на руки
+        # "min_salary_net": 70000,         # Минимум 70к на руки
     },
     
     # Параметры публикации
     "publication": {
-        "vacancies_per_post": 5,         # 5 вакансий в одном посте
+        "vacancies_per_post": 10,         # 5 вакансий в одном посте
         "post_times_msk": ["09:00", "13:00", "19:00", "21:00"],  # Время публикации
     },
     
