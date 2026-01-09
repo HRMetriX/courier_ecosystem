@@ -203,22 +203,46 @@ def get_vacancies_for_publication(
 
 
 def format_salary_display(vacancy: Dict) -> str:
-    """Форматирует отображение зарплаты."""
-    parts = []
+    """Форматирует отображение зарплаты с учётом частоты выплат."""
+    salary_display = ""
     
-    # Зарплата "от" (на руки)
-    if vacancy.get("salary_from_net"):
-        parts.append(f"от {vacancy['salary_from_net']:,} ₽".replace(",", " "))
+    # Получаем зарплату "от" и "до" (на руки)
+    salary_from = vacancy.get("salary_from_net")
+    salary_to = vacancy.get("salary_to_net")
     
-    # Зарплата "до" (на руки) - приоритетная
-    if vacancy.get("salary_to_net"):
-        if vacancy.get("salary_from_net"):
-            parts.append(f"до {vacancy['salary_to_net']:,} ₽".replace(",", " "))
+    # Форматируем зарплату
+    if salary_from and salary_to:
+        if salary_from == salary_to:
+            salary_display = f"{salary_from:,} ₽".replace(",", " ")
         else:
-            parts.append(f"{vacancy['salary_to_net']:,} ₽".replace(",", " "))
+            salary_display = f"от {salary_from:,} до {salary_to:,} ₽".replace(",", " ")
+    elif salary_from:
+        salary_display = f"от {salary_from:,} ₽".replace(",", " ")
+    elif salary_to:
+        salary_display = f"{salary_to:,} ₽".replace(",", " ")
+    else:
+        # Если зарплаты нет вообще
+        return "не указана"
     
-    return " ".join(parts) if parts else ""
-
+    # Добавляем информацию о выплатах (период)
+    period_name = vacancy.get("salary_period_name")
+    if period_name:
+        salary_display += f" ({period_name}"
+        
+        # Добавляем частоту, если есть
+        frequency_name = vacancy.get("salary_frequency_name")
+        if frequency_name and frequency_name.lower() != "не указано":
+            salary_display += f", {frequency_name}"
+        elif frequency_name and frequency_name.lower() == "не указано":
+            # Если явно "не указано", не добавляем
+            pass
+        else:
+            # Если frequency_name есть, но мы хотим показать "не указано"
+            salary_display += ", не указано"
+        
+        salary_display += ")"
+    
+    return salary_display
 
 def format_payment_info(vacancy: Dict) -> str:
     """Форматирует информацию о выплатах."""
