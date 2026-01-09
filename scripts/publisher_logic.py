@@ -126,16 +126,18 @@ def should_publish_now() -> bool:
 def get_vacancies_for_publication(
     supabase_client: Client,
     city_slug: str,
-    limit: int = 10
+    limit: int = 10,
+    max_per_company: int = 2  # Максимум вакансий от одной компании
 ) -> List[Dict]:
     """
     Получает вакансии для публикации.
     
-    Критерии из publisher_config.py:
+    Критерии:
     1. is_posted = FALSE
-    2. published_at не старше max_vacancy_age_days (30 дней)
-    3. created_at не старше max_parsed_age_days (7 дней)
+    2. published_at не старше 30 дней
+    3. created_at (парсинг) не старше 7 дней
     4. currency = 'RUR'
+    5. Не более max_per_company вакансий от одной компании
     """
     
     # Рассчитываем даты-ограничители
@@ -148,6 +150,10 @@ def get_vacancies_for_publication(
     logger.info(f"  - created_at >= {max_parsed_date.strftime('%Y-%m-%d')}")
     logger.info(f"  - currency = 'RUR'")
     logger.info(f"  - is_posted = FALSE")
+    logger.info(f"  - не более {max_per_company} вакансий от одной компании")
+    
+    # Сначала получаем больше вакансий, чтобы потом фильтровать
+    initial_limit = limit * 3  # Берем в 3 раза больше для фильтрации
     
     # Строим запрос
     query = (
@@ -161,46 +167,54 @@ def get_vacancies_for_publication(
         .gte("created_at", max_parsed_date.isoformat())
     )
     
-    # ВАЖНО: Для версии supabase 1.1.1 параметр nulls_last не поддерживается
-    # Используем альтернативный подход
+    # Сортировка: сначала вакансии с зарплатой (от высокой к низкой),
+    # потом без зарплаты, все по свежести
     query = query.order("salary_to_net", desc=True)
     query = query.order("published_at", desc=True)
     
-    # Лимит
-    query = query.limit(limit)
+    # Лимит увеличенный
+    query = query.limit(initial_limit)
     
     # Выполняем
     try:
         response = query.execute()
         logger.info(f"Найдено {len(response.data)} вакансий для {city_slug}")
         
-        # Вручную сортируем, чтобы вакансии без зарплаты были в конце
-        if response.data:
-            # Разделяем на вакансии с зарплатой и без
-            with_salary = []
-            without_salary = []
-            
-            for vacancy in response.data:
-                if vacancy.get("salary_to_net") is not None:
-                    with_salary.append(vacancy)
-                else:
-                    without_salary.append(vacancy)
-            
-            # Сортируем вакансии с зарплатой по убыванию
-            with_salary.sort(key=lambda x: x.get("salary_to_net", 0), reverse=True)
-            
-            # Объединяем: сначала с зарплатой, потом без
-            sorted_vacancies = with_salary + without_salary
-            
-            # Ограничиваем лимитом
-            return sorted_vacancies[:limit]
+        if not response.data:
+            return []
         
-        return response.data if response.data else []
+        # Фильтруем по компаниям
+        filtered_vacancies = []
+        company_counter = {}
+        
+        for vacancy in response.data:
+            employer = vacancy.get('employer', '').strip()
+            
+            # Если компания не указана - пропускаем
+            if not employer:
+                continue
+                
+            # Считаем сколько уже взяли от этой компании
+            current_count = company_counter.get(employer, 0)
+            
+            # Если ещё не превысили лимит - добавляем
+            if current_count < max_per_company:
+                filtered_vacancies.append(vacancy)
+                company_counter[employer] = current_count + 1
+                logger.debug(f"Добавили вакансию от {employer} (уже {current_count + 1})")
+            
+            # Если уже набрали достаточно вакансий - останавливаемся
+            if len(filtered_vacancies) >= limit:
+                break
+        
+        logger.info(f"После фильтрации по компаниям: {len(filtered_vacancies)} вакансий")
+        logger.info(f"Уникальных компаний: {len(company_counter)}")
+        
+        return filtered_vacancies
         
     except Exception as e:
         logger.error(f"Ошибка при запросе вакансий для {city_slug}: {str(e)}")
         return []
-
 
 def format_salary_display(vacancy: Dict) -> str:
     """Форматирует отображение зарплаты с учётом частоты выплат."""
