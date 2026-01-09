@@ -1,28 +1,88 @@
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional
-from supabase import create_client
+# courier_mules_project/scripts/publisher_logic.py
+
+import os
+import sys
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import List, Dict, Optional, Tuple
+from supabase import create_client, Client
+
+# Добавляем путь к корню проекта для импорта конфигов
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from config.publisher_config import PUBLISH_CONFIG, CITIES
+except ImportError:
+    # Fallback конфиг если не удалось импортировать
+    PUBLISH_CONFIG = {
+        "criteria": {
+            "max_vacancy_age_days": 30,
+            "max_parsed_age_days": 7,
+            "currency": "RUR",
+        },
+        "publication": {
+            "vacancies_per_post": 5,
+            "post_times_msk": ["09:00", "13:00", "19:00", "21:00"],
+        },
+        "formatting": {
+            "emojis": {
+                "title": "🚴",
+                "salary": "💰",
+                "company": "🏢",
+                "date": "📅",
+                "payment": "💳",
+                "employer": "✅",
+                "divider": "---",
+                "verified": "✅",
+                "location": "📍",
+                "schedule": "🕒",
+                "experience": "📊",
+                "employment": "📝",
+                "skills": "🎯",
+                "license": "🚗",
+            },
+            "referral_link": "https://ya.cc/8UiUqj",
+        }
+    }
+    
+    CITIES = {
+        "msk": {"channel": "@courier_jobs_msk", "name": "Москва"},
+        "spb": {"channel": "@courier_jobs_spb", "name": "Санкт-Петербург"},
+        "nsk": {"channel": "@courier_jobs_nsk", "name": "Новосибирск"},
+        "ekb": {"channel": "@courier_jobs_ekb", "name": "Екатеринбург"},
+        "kzn": {"channel": "@courier_jobs_kzn", "name": "Казань"},
+    }
+
+# Настройка логирования для GitHub Actions
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
 
 def get_vacancies_for_publication(
-    supabase_client, 
-    city_slug: str, 
-    limit: int = 5,
-    min_salary_net: int = 70000
+    supabase_client: Client,
+    city_slug: str,
+    limit: int = 5
 ) -> List[Dict]:
     """
-    Получает вакансии для публикации по новым критериям.
+    Получает вакансии для публикации.
     
     Критерии:
     1. is_posted = FALSE
     2. published_at не старше 30 дней
-    3. created_at (парсинг) не старше 7 дней  
+    3. created_at (парсинг) не старше 7 дней
     4. currency = 'RUR'
-    5. salary_to_net >= min_salary_net
     """
     
     # Рассчитываем даты-ограничители
-    now = datetime.now()
-    max_vacancy_date = now - timedelta(days=30)  # Не старше 30 дней
-    max_parsed_date = now - timedelta(days=7)    # Не старше 7 дней с парсинга
+    now = datetime.now(timezone.utc)
+    max_vacancy_date = now - timedelta(days=PUBLISH_CONFIG["criteria"]["max_vacancy_age_days"])
+    max_parsed_date = now - timedelta(days=PUBLISH_CONFIG["criteria"]["max_parsed_age_days"])
     
     # Строим запрос
     query = (
@@ -31,23 +91,28 @@ def get_vacancies_for_publication(
         .select("*")
         .eq("city_slug", city_slug)
         .eq("is_posted", False)
-        .eq("currency", "RUR")
-        .gte("salary_to_net", min_salary_net)
+        .eq("currency", PUBLISH_CONFIG["criteria"]["currency"])
         .gte("published_at", max_vacancy_date.isoformat())
         .gte("created_at", max_parsed_date.isoformat())
     )
     
-    # Сортировка
-    query = query.order("salary_to_net", desc=True)
+    # Сортировка: сначала вакансии с зарплатой (от высокой к низкой),
+    # потом без зарплаты, все по свежести
+    query = query.order("salary_to_net", desc=True, nulls_last=True)
     query = query.order("published_at", desc=True)
     
     # Лимит
     query = query.limit(limit)
     
     # Выполняем
-    response = query.execute()
-    
-    return response.data if response.data else []
+    try:
+        response = query.execute()
+        logger.info(f"Найдено {len(response.data)} вакансий для {city_slug}")
+        return response.data if response.data else []
+    except Exception as e:
+        logger.error(f"Ошибка при запросе вакансий для {city_slug}: {str(e)}")
+        return []
+
 
 def format_salary_display(vacancy: Dict) -> str:
     """Форматирует отображение зарплаты."""
@@ -64,7 +129,8 @@ def format_salary_display(vacancy: Dict) -> str:
         else:
             parts.append(f"{vacancy['salary_to_net']:,} ₽".replace(",", " "))
     
-    return " ".join(parts) if parts else "ЗП не указана"
+    return " ".join(parts) if parts else ""
+
 
 def format_payment_info(vacancy: Dict) -> str:
     """Форматирует информацию о выплатах."""
@@ -80,11 +146,12 @@ def format_payment_info(vacancy: Dict) -> str:
     
     return " ".join(parts) if parts else ""
 
+
 def format_publication_date(published_at: str) -> str:
     """Форматирует дату публикации."""
     try:
         pub_date = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         diff = now - pub_date
         
         if diff.days == 0:
@@ -94,27 +161,357 @@ def format_publication_date(published_at: str) -> str:
         elif diff.days < 7:
             return f"{diff.days} дня назад"
         elif diff.days < 30:
-            return f"{diff.days // 7} недели назад"
+            weeks = diff.days // 7
+            return f"{weeks} недел{'ю' if weeks == 1 else 'и' if weeks < 5 else 'ь'} назад"
         else:
             return pub_date.strftime("%d.%m.%Y")
     except:
         return ""
 
-def should_publish_now(post_times_msk: List[str]) -> bool:
-    """Проверяет, нужно ли публиковать сейчас."""
-    from datetime import timezone
+
+def format_post_with_vacancies(vacancies: List[Dict], city_name: str) -> Tuple[str, Optional[str]]:
+    """
+    Форматирует пост с несколькими вакансиями.
     
-    now_msk = datetime.now(timezone(timedelta(hours=3)))
-    current_time_str = now_msk.strftime("%H:%M")
+    Возвращает:
+    - Текст поста
+    - Ссылка для кнопки (если есть реферальная ссылка)
+    """
+    if not vacancies:
+        return "Нет новых вакансий для публикации", None
     
-    # Проверяем плюс-минус 10 минут от запланированного времени
-    for scheduled_time in post_times_msk:
-        scheduled_hour, scheduled_minute = map(int, scheduled_time.split(":"))
-        scheduled_dt = now_msk.replace(hour=scheduled_hour, minute=scheduled_minute, second=0)
+    emojis = PUBLISH_CONFIG["formatting"]["emojis"]
+    
+    # Заголовок поста
+    header = f"<b>🚀 Новые вакансии курьеров в {city_name}</b>\n\n"
+    
+    # Форматируем вакансии
+    vacancy_sections = []
+    for i, vacancy in enumerate(vacancies, 1):
+        vacancy_text = f"<b>{i}. {vacancy['title']} в {vacancy['employer']}</b>\n"
         
-        time_diff = abs((now_msk - scheduled_dt).total_seconds() / 60)  # в минутах
+        # Зарплата
+        salary_display = format_salary_display(vacancy)
+        if salary_display:
+            vacancy_text += f"{emojis['salary']} <b>{salary_display}</b>\n"
         
-        if time_diff <= 10:  # +-10 минут
-            return True
+        # График
+        if vacancy.get('schedule_name'):
+            vacancy_text += f"{emojis['schedule']} {vacancy['schedule_name']}\n"
+        
+        # Опыт
+        if vacancy.get('experience_name'):
+            vacancy_text += f"{emojis['experience']} {vacancy['experience_name']}\n"
+        
+        # Ссылка
+        vacancy_text += f"📌 <a href='{vacancy['external_url']}'>Подробнее на HH.ru</a>\n"
+        
+        if i < len(vacancies):
+            vacancy_text += f"\n{emojis['divider']}\n\n"
+        
+        vacancy_sections.append(vacancy_text)
+    
+    # Собираем пост
+    post_text = header + "".join(vacancy_sections)
+    
+    # Добавляем информацию о канале
+    footer = f"\n\n📢 <b>Подпишись на канал</b>, чтобы не пропустить новые вакансии!"
+    
+    # Реферальная ссылка (опционально)
+    referral_link = PUBLISH_CONFIG["formatting"].get("referral_link")
+    if referral_link:
+        footer += f"\n\n💼 Ищешь работу? <a href='{referral_link}'>Посмотри все вакансии</a>"
+    
+    post_text += footer
+    
+    # Проверяем длину сообщения (Telegram ограничение: 4096 символов)
+    if len(post_text) > 4096:
+        logger.warning(f"Сообщение слишком длинное ({len(post_text)} символов), обрезаем...")
+        # Оставляем только первые 3 вакансии
+        return format_post_with_vacancies(vacancies[:3], city_name)
+    
+    return post_text, referral_link
+
+
+def mark_vacancies_as_posted(
+    supabase_client: Client,
+    vacancy_ids: List[int],
+    channel_id: str
+) -> bool:
+    """
+    Помечает вакансии как опубликованные.
+    
+    Возвращает True если успешно, False если ошибка.
+    """
+    if not vacancy_ids:
+        return True
+    
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # Обновляем все вакансии одним запросом
+        response = (
+            supabase_client
+            .table("vacancies")
+            .update({
+                "is_posted": True,
+                "posted_at": now,
+                "channel_id": channel_id,
+                "updated_at": now
+            })
+            .in_("id", vacancy_ids)
+            .execute()
+        )
+        
+        logger.info(f"Отмечено {len(vacancy_ids)} вакансий как опубликованные")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении вакансий: {str(e)}")
+        return False
+
+
+def publish_to_telegram(
+    bot_token: str,
+    channel_id: str,
+    post_text: str,
+    button_url: Optional[str] = None
+) -> bool:
+    """
+    Публикует пост в Telegram канал.
+    
+    Возвращает True если успешно, False если ошибка.
+    """
+    try:
+        import requests
+        
+        # Создаем кнопку, если есть ссылка
+        reply_markup = None
+        if button_url:
+            reply_markup = {
+                "inline_keyboard": [[
+                    {"text": "💼 Посмотреть все вакансии", "url": button_url}
+                ]]
+            }
+        
+        # Отправляем сообщение
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": channel_id,
+            "text": post_text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        
+        response = requests.post(url, json=payload, timeout=30)
+        response.raise_for_status()
+        
+        logger.info(f"Пост успешно опубликован в {channel_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ошибка публикации в Telegram: {str(e)}")
+        return False
+
+
+def publish_city_vacancies(
+    supabase_client: Client,
+    bot_token: str,
+    city_slug: str
+) -> Tuple[bool, str, int]:
+    """
+    Основная функция публикации вакансий для города.
+    
+    Возвращает:
+    - Успех/неудача (bool)
+    - Сообщение о результате (str)
+    - Количество опубликованных вакансий (int)
+    """
+    try:
+        # Получаем данные города
+        city_info = CITIES.get(city_slug)
+        if not city_info:
+            return False, f"Город {city_slug} не найден в конфигурации", 0
+        
+        vacancies_per_post = PUBLISH_CONFIG["publication"]["vacancies_per_post"]
+        
+        # Получаем вакансии для публикации
+        vacancies = get_vacancies_for_publication(
+            supabase_client, 
+            city_slug, 
+            limit=vacancies_per_post
+        )
+        
+        if not vacancies:
+            return True, f"Нет новых вакансий для {city_info['name']}", 0
+        
+        logger.info(f"Найдено {len(vacancies)} вакансий для публикации в {city_info['name']}")
+        
+        # Форматируем пост
+        post_text, button_url = format_post_with_vacancies(
+            vacancies, 
+            city_info['name']
+        )
+        
+        # Публикуем в Telegram
+        success = publish_to_telegram(
+            bot_token,
+            city_info['channel'],
+            post_text,
+            button_url
+        )
+        
+        if not success:
+            return False, f"Ошибка публикации в {city_info['name']}", 0
+        
+        # Помечаем вакансии как опубликованные
+        vacancy_ids = [v['id'] for v in vacancies]
+        mark_success = mark_vacancies_as_posted(
+            supabase_client,
+            vacancy_ids,
+            city_info['channel']
+        )
+        
+        if not mark_success:
+            logger.warning(f"Вакансии опубликованы, но не отмечены в БД для {city_info['name']}")
+        
+        return True, f"Опубликовано {len(vacancies)} вакансий", len(vacancies)
+        
+    except Exception as e:
+        logger.error(f"Критическая ошибка при публикации {city_slug}: {str(e)}")
+        return False, f"Критическая ошибка: {str(e)}", 0
+
+
+def should_publish_now() -> bool:
+    """
+    Проверяет, нужно ли публиковать сейчас по московскому времени.
+    
+    В GitHub Actions всегда возвращает True, так как триггер уже настроен.
+    Для локального тестирования можно использовать проверку времени.
+    """
+    # Для GitHub Actions всегда публикуем
+    if "GITHUB_ACTIONS" in os.environ:
+        return True
+    
+    # Для локального тестирования проверяем время
+    try:
+        post_times = PUBLISH_CONFIG["publication"]["post_times_msk"]
+        now_msk = datetime.now(timezone(timedelta(hours=3)))
+        
+        for scheduled_time in post_times:
+            try:
+                scheduled_hour, scheduled_minute = map(int, scheduled_time.split(":"))
+                scheduled_dt = now_msk.replace(hour=scheduled_hour, minute=scheduled_minute, second=0)
+                
+                time_diff = abs((now_msk - scheduled_dt).total_seconds() / 60)
+                
+                if time_diff <= 10:  # +-10 минут
+                    return True
+            except (ValueError, AttributeError):
+                continue
+    except Exception as e:
+        logger.warning(f"Ошибка проверки времени: {e}")
     
     return False
+
+
+def main_publisher() -> Tuple[bool, Dict[str, int]]:
+    """
+    Основная функция публикации для всех городов.
+    
+    Возвращает:
+    - Общий успех (bool) - True если все города обработаны успешно
+    - Статистика по городам {city_slug: количество_вакансий}
+    """
+    # Получаем конфигурацию из переменных окружения
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+    bot_token = os.environ.get("TG_BOT_TOKEN")
+    
+    if not supabase_url:
+        logger.error("Не установлена переменная SUPABASE_URL")
+        return False, {}
+    
+    if not supabase_key:
+        logger.error("Не установлена переменная SUPABASE_KEY или SUPABASE_SERVICE_ROLE_KEY")
+        return False, {}
+    
+    if not bot_token:
+        logger.error("Не установлена переменная TG_BOT_TOKEN")
+        return False, {}
+    
+    # Проверяем, нужно ли публиковать (только для локального запуска)
+    if not should_publish_now():
+        logger.info("Не время для публикации")
+        return True, {}
+    
+    # Подключаемся к Supabase
+    try:
+        supabase_client = create_client(supabase_url, supabase_key)
+        logger.info("Успешное подключение к Supabase")
+    except Exception as e:
+        logger.error(f"Ошибка подключения к Supabase: {str(e)}")
+        return False, {}
+    
+    # Публикуем для каждого города
+    results = {}
+    all_success = True
+    
+    logger.info(f"Начинаем публикацию для {len(CITIES)} городов")
+    
+    for city_slug in CITIES.keys():
+        logger.info(f"\n{'='*50}")
+        logger.info(f"Публикация вакансий для {city_slug.upper()}...")
+        
+        success, message, count = publish_city_vacancies(
+            supabase_client,
+            bot_token,
+            city_slug
+        )
+        
+        results[city_slug] = count
+        
+        if success:
+            logger.info(f"✅ {city_slug.upper()}: {message}")
+        else:
+            logger.error(f"❌ {city_slug.upper()}: {message}")
+            all_success = False
+        
+        # Небольшая задержка между городами
+        import time
+        time.sleep(1)
+    
+    # Итоговая статистика
+    logger.info(f"\n{'='*50}")
+    logger.info("ИТОГИ ПУБЛИКАЦИИ:")
+    total_vacancies = 0
+    for city_slug, count in results.items():
+        city_name = CITIES.get(city_slug, {}).get('name', city_slug)
+        logger.info(f"{city_name}: {count} вакансий")
+        total_vacancies += count
+    
+    logger.info(f"Всего опубликовано: {total_vacancies} вакансий")
+    logger.info(f"{'='*50}")
+    
+    return all_success, results
+
+
+if __name__ == "__main__":
+    """
+    Точка входа для запуска из командной строки.
+    """
+    import sys
+    
+    # Запускаем публикацию
+    success, stats = main_publisher()
+    
+    # Возвращаем код выхода для GitHub Actions
+    if success:
+        logger.info("Публикация завершена успешно")
+        sys.exit(0)
+    else:
+        logger.error("Публикация завершена с ошибками")
+        sys.exit(1)
