@@ -214,8 +214,8 @@ def upsert_vacancy(supabase_client, vacancy_data: Dict):
         if "duplicate key" in str(e).lower() or "23505" in str(e):
             update_data = {
                 **vacancy_data, 
-                "is_posted": False,
-                "updated_at": datetime.now().isoformat()
+            #    "is_posted": False,
+            #    "updated_at": datetime.now().isoformat()
             }
             supabase_client.table("vacancies").update(update_data).eq(
                 "external_id", vacancy_data["external_id"]
