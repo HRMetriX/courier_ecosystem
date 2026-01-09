@@ -193,6 +193,9 @@ def main():
     
     if event_name == "workflow_run":
         handle_workflow_event()
+    elif event_name == "workflow_dispatch":
+        # Ручной запуск - просто тестовое сообщение
+        send_simple_alert("🔄 Ручной запуск системы алертов")
     else:
         print(f"⚠️ Неподдерживаемое событие: {event_name}")
         send_simple_alert(f"Неподдерживаемое событие: {event_name}")
