@@ -436,17 +436,23 @@ def mark_vacancies_as_posted(
     Возвращает True если успешно, False если ошибка.
     """
     if not vacancy_ids:
+        logger.info("Нет вакансий для обновления")
         return True
     
     try:
         now = datetime.now(timezone.utc).isoformat()
+        
+        logger.info(f"🔧 Обновляю {len(vacancy_ids)} вакансий:")
+        logger.info(f"   is_posted: False → True")
+        logger.info(f"   posted_at: NULL → {now[:19]}")
+        logger.info(f"   channel_id: NULL → {channel_id}")
         
         # Обновляем все вакансии одним запросом
         response = (
             supabase_client
             .table("vacancies")
             .update({
-                "is_posted": True,
+                "is_posted": True,  # Важно: boolean True
                 "posted_at": now,
                 "channel_id": channel_id,
                 "updated_at": now
@@ -455,13 +461,34 @@ def mark_vacancies_as_posted(
             .execute()
         )
         
-        logger.info(f"Отмечено {len(vacancy_ids)} вакансий как опубликованные")
+        # Проверяем результат
+        if hasattr(response, 'data'):
+            logger.info(f"✅ Успешно обновлено {len(response.data)} записей")
+        else:
+            logger.info("✅ Запрос выполнен, проверяем вручную")
+        
+        # Дополнительная проверка
+        check_query = (
+            supabase_client
+            .table("vacancies")
+            .select("id, is_posted, posted_at")
+            .in_("id", vacancy_ids[:3])  # Проверим первые 3
+            .execute()
+        )
+        
+        for vac in check_query.data:
+            status = "✅" if vac.get('is_posted') else "❌"
+            logger.info(f"   {status} Вакансия {vac['id']}: is_posted={vac.get('is_posted')}")
+        
         return True
         
     except Exception as e:
-        logger.error(f"Ошибка при обновлении вакансий: {str(e)}")
+        logger.error(f"❌ Ошибка при обновлении вакансий: {str(e)}")
+        logger.error("   Проверьте:")
+        logger.error("   1. Тип поля is_posted в Supabase")
+        logger.error("   2. Права доступа к таблице")
+        logger.error("   3. Корректность vacancy_ids")
         return False
-
 
 def publish_to_telegram(
     bot_token: str,
