@@ -491,3 +491,19 @@ body {
     padding: 1.4rem;
   }
 }
+
+.closing-content {
+  padding: 2rem;
+  text-align: center;
+}
+
+.closing-text {
+  font-size: 1.15rem;
+  margin: 1.5rem 0;
+  color: var(--text-dark);
+  line-height: 1.6;
+}
+
+.text-center {
+  text-align: center;
+}
