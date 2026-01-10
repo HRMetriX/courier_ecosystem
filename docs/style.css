@@ -296,3 +296,63 @@ body {
   box-shadow: 0 8px 30px rgba(0,0,0,0.06);
   margin-bottom: 2.5rem;
 }
+
+/* === STEPS PROCESS === */
+.steps-process {
+  margin: 2rem 0;
+}
+
+.step-item {
+  display: flex;
+  gap: 1.2rem;
+  margin-bottom: 1.8rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.step-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.step-number {
+  background: var(--primary);
+  color: var(--secondary);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(255, 204, 51, 0.3);
+}
+
+.step-content h3 {
+  font-size: 1.2rem;
+  margin-bottom: 0.5rem;
+  color: var(--secondary);
+}
+
+.step-content p {
+  font-size: 1rem;
+  color: var(--text-dark);
+  line-height: 1.6;
+}
+
+.step-content a {
+  color: var(--secondary);
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+.step-content a:hover {
+  color: var(--accent);
+}
+
+.mt-2 {
+  margin-top: 2rem;
+}
