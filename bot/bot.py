@@ -11,7 +11,6 @@ from telegram.ext import (
     filters,
 )
 from aiohttp import web
-import threading
 
 # === КОНФИГУРАЦИЯ ===
 BOT_TOKEN = os.getenv("TG_HELPER_BOT_TOKEN")
@@ -43,23 +42,7 @@ async def health_check(request):
     """Обработчик для health-check"""
     return web.Response(text="Bot is alive")
 
-async def start_web_server():
-    """Запускает веб-сервер для health-check"""
-    app = web.Application()
-    app.router.add_get('/', health_check)
-    app.router.add_get('/health', health_check)
-    
-    port = int(os.getenv("PORT", 8080))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    logger.info(f"Web server started on port {port}")
-    
-    # Бесконечное ожидание (сервер работает)
-    await asyncio.Event().wait()
-
-# === ФУНКЦИИ БОТА (оставляем ваши оригинальные функции) ===
+# === ФУНКЦИИ БОТА ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🚀 Начать регистрацию", callback_data="register")],
@@ -129,25 +112,47 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === ОСНОВНАЯ ФУНКЦИЯ ===
 async def main():
-    """Запускает и бота, и веб-сервер одновременно"""
+    """Запускает веб-сервер и бота"""
     logger.info("Starting bot application...")
+    
+    # Создаем и настраиваем веб-сервер
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    
+    port = int(os.getenv("PORT", 8080))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"Web server started on port {port}")
     
     # Создаем приложение бота
     application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Добавляем обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Запускаем веб-сервер и бота параллельно
-    await asyncio.gather(
-        application.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES,
-        ),
-        start_web_server()
+    # Запускаем бота
+    logger.info("Bot is starting polling...")
+    await application.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+        close_loop=False  # Важно: не закрывать event loop
     )
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Создаем новый event loop вручную
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Bot crashed: {e}")
+        raise
+    finally:
+        if not loop.is_closed():
+            loop.close()
