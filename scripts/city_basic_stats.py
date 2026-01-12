@@ -60,7 +60,7 @@ def load_data_from_supabase():
     
     return df
 
-def create_digest_image(city_name: str, city_ pd.DataFrame, today_date: datetime):
+def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: datetime):
     """Создание изображения дайджеста для конкретного города"""
     
     # Устанавливаем шрифты
@@ -203,7 +203,7 @@ def create_digest_image(city_name: str, city_ pd.DataFrame, today_date: datetime
     buf.seek(0)
     return buf
 
-def generate_telegram_text(city_name: str, city_ pd.DataFrame, today_date: datetime):
+def generate_telegram_text(city_name: str, city_data: pd.DataFrame, today_date: datetime):
     """Генерация текста дайджеста для Telegram"""
     
     # Используем исправленный фильтр для зарплат
