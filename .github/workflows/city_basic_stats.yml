@@ -1,0 +1,42 @@
+name: City Basic Stats Daily Digest
+
+on:
+  schedule:
+    # Запуск каждый день в 11:00 по МСК (08:00 UTC)
+    - cron: '0 8 * * *'
+  workflow_dispatch:  # Возможность ручного запуска для тестов
+
+jobs:
+  generate-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install pandas matplotlib python-telegram-bot==22.5 supabase python-dateutil
+
+    - name: Run city basic stats generator
+      working-directory: ./courier_ecosystem/scripts
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      run: |
+        python city_basic_stats.py
+
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: logs-${{ github.run_number }}
+        path: |
+          *.log
+          !*.git*
