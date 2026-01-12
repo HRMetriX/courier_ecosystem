@@ -30,6 +30,8 @@ jobs:
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       run: |
+        pwd
+        ls -la
         python city_basic_stats.py
 
     - name: Upload logs
