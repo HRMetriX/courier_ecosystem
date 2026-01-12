@@ -267,22 +267,24 @@ def generate_telegram_text(city_name: str, city_data: pd.DataFrame, today_date: 
         verdict = "🟡 СТАБИЛЬНО"
         verdict_color = "🟡"
     
-    telegram_text = f"""📊 ДАЙДЖЕСТ РЫНКА ВАКАНСИЙ | {city_name.upper()}
+    telegram_text = f"""📊 Аналитика рынка вакансий
 📅 {today_date.strftime('%d.%m.%Y')}
 
-📈 ОСНОВНЫЕ ПОКАЗАТЕЛИ:
-• Сегодня: {today_count:,} вакансий ({daily_growth:+,d}, {daily_growth_pct:+.1f}%)
-• За неделю: {len(city_week):,} вакансий
-• С зарплатой: {len(city_salary_week):,} вакансий
-• Покрытие зарплатами: {salary_coverage_week:.0f}%
+📈 Ключевые показатели:
 
-💰 ЗАРПЛАТЫ СЕГОДНЯ ({len(salary_today):,} вакансий):
-• Средняя: {salary_today['salary_to_net'].mean():,.0f} ₽
-• Медианная: {salary_today['salary_to_net'].median():,.0f} ₽
-• 25% получают до: {salary_today['salary_to_net'].quantile(0.25):,.0f} ₽
-• 75% получают до: {salary_today['salary_to_net'].quantile(0.75):,.0f} ₽
+✓ Сегодня: {today_count:,} вакансий ({daily_growth:+,d}, {daily_growth_pct:+.1f}%)
+✓ За неделю: {len(city_week):,} вакансий
+✓ С зарплатой: {len(city_salary_week):,} вакансий
+✓ Покрытие зарплатами: {salary_coverage_week:.0f}%
 
-🏢 ТОП РАБОТОДАТЕЛИ СЕГОДНЯ:
+💰 Зарплаты на сегодня ({len(salary_today):,} вакансий):
+
+✓ Средняя: {salary_today['salary_to_net'].mean():,.0f} ₽
+✓ Медианная: {salary_today['salary_to_net'].median():,.0f} ₽
+✓ 25% получают до: {salary_today['salary_to_net'].quantile(0.25):,.0f} ₽
+✓ 75% получают до: {salary_today['salary_to_net'].quantile(0.75):,.0f} ₽
+
+🏢 ТОП-3 работодателей:
 """
     
     for i, (employer, count) in enumerate(top_employers_today.items(), 1):
@@ -291,13 +293,14 @@ def generate_telegram_text(city_name: str, city_data: pd.DataFrame, today_date: 
     
     telegram_text += f"""
 
-🎯 ВЕРДИКТ ДНЯ: {verdict_color} {verdict}
+🎯 Динамика: {verdict_color} {verdict}
 
-📊 ВСЕГО В {city_name.upper()}:
-• Вакансий: {len(city_data):,}
-• С зарплатой: {len(city_salary_data):,}
-• Средняя зарплата: {city_salary_data['salary_to_net'].mean():,.0f} ₽
-• Период: {city_data['published_date'].min()} - {today_date.date()}
+📊 Сводная инфа по городу:
+
+✓ Вакансий: {len(city_data):,}
+✓ С зарплатой: {len(city_salary_data):,}
+✓ Средняя зарплата: {city_salary_data['salary_to_net'].mean():,.0f} ₽
+✓ Период: {city_data['published_date'].min()} - {today_date.date()}
 
 ⏰ Обновлено: {datetime.now().strftime('%H:%M')}
 """
