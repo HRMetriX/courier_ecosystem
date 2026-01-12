@@ -4,9 +4,8 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 from io import BytesIO
 from supabase import create_client
-import telegram.ext
+import asyncio
 from telegram import Bot
-from telegram.ext import Application
 from typing import Dict, List
 
 # Конфигурация
@@ -47,6 +46,18 @@ def load_data_from_supabase():
 
     df = pd.DataFrame(all_data)
     print(f"\n✅ Итого загружено {len(df)} строк")
+    
+    # Преобразуем колонки для совместимости
+    if 'published_at' in df.columns:
+        # Преобразуем published_at в московское время и берем ТОЛЬКО ДАТУ
+        df['published_at'] = pd.to_datetime(df['published_at'])
+        moscow_tz = 'Europe/Moscow'
+        df['published_at_moscow'] = df['published_at'].dt.tz_convert(moscow_tz)
+        df['published_date'] = df['published_at_moscow'].dt.date
+    elif 'published_date' not in df.columns:
+        # Если ни одной колонки нет, создаем пустую
+        df['published_date'] = pd.NaT
+    
     return df
 
 def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: datetime):
@@ -82,7 +93,7 @@ def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: dat
     
     # СТАТИСТИКА ЗА НЕДЕЛЮ
     city_week = city_data[city_data['published_date'] >= week_start_date.date()]
-    city_salary_week = city_salary_data[city_salary_data['published_date'] >= week_start_date.date()]
+    city_salary_week = city_salary_data[city_salary_week['published_date'] >= week_start_date.date()]
     
     # ЗАРПЛАТНАЯ СТАТИСТИКА ЗА НЕДЕЛЮ
     weekly_salary_stats = []
@@ -221,7 +232,7 @@ def generate_telegram_text(city_name: str, city_data: pd.DataFrame, today_date: 
     
     # СТАТИСТИКА ЗА НЕДЕЛЮ
     city_week = city_data[city_data['published_date'] >= week_start_date.date()]
-    city_salary_week = city_salary_data[city_salary_data['published_date'] >= week_start_date.date()]
+    city_salary_week = city_salary_data[city_salary_week['published_date'] >= week_start_date.date()]
     
     # РАБОТОДАТЕЛИ
     top_employers_today = city_today['employer'].value_counts().head(3)
@@ -315,6 +326,7 @@ async def main():
     required_columns = ['city_slug', 'published_date', 'salary_period_name', 'salary_to_net', 'employer']
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
+        print(f"Доступные колонки: {list(df.columns)}")
         raise ValueError(f"Отсутствуют столбцы: {missing_columns}")
     
     # Приводим published_date к datetime
