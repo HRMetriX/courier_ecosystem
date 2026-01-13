@@ -6,7 +6,6 @@ from io import BytesIO
 from supabase import create_client
 import asyncio
 from telegram import Bot
-from typing import Dict, List
 
 # Конфигурация
 CITIES = {
@@ -16,6 +15,33 @@ CITIES = {
     "ekb": {"channel": "@courier_jobs_ekb", "name": "Екатеринбург"},
     "kzn": {"channel": "@courier_jobs_kzn", "name": "Казань"},
 }
+
+# Вспомогательные функции
+def contains_monthly_pattern(text):
+    """Проверяет, содержит ли текст указание на месячные выплаты"""
+    if pd.isna(text):
+        return False
+    text_lower = str(text).lower()
+    patterns = ['месяц', 'month', 'мес', 'ежемесячно', 'в месяц', 'per month', 'месячный']
+    return any(pattern in text_lower for pattern in patterns)
+
+def safe_format_number(value, suffix=" ₽"):
+    """Безопасное форматирование чисел с обработкой NaN"""
+    if pd.isna(value) or value is None:
+        return "нет данных"
+    try:
+        return f"{value:,.0f}{suffix}"
+    except:
+        return "ошибка"
+
+def get_comparison_dates(today_date):
+    """Возвращает даты для корректного сравнения"""
+    return {
+        'today': today_date.date(),
+        'yesterday': (today_date - timedelta(days=1)).date(),
+        'day_before': (today_date - timedelta(days=2)).date(),
+        'week_start': (today_date - timedelta(days=6)).date()
+    }
 
 def load_data_from_supabase():
     """Загрузка всех данных из Supabase"""
@@ -30,7 +56,7 @@ def load_data_from_supabase():
     # Загрузка ВСЕХ данных с пагинацией
     all_data = []
     page = 0
-    limit = 1000  # Максимальный лимит за запрос
+    limit = 1000
 
     while True:
         response = supabase_client.table("vacancies").select("*").range(
@@ -49,13 +75,12 @@ def load_data_from_supabase():
     
     # Преобразуем колонки для совместимости
     if 'published_at' in df.columns:
-        # Преобразуем published_at в московское время и берем ТОЛЬКО ДАТУ
-        df['published_at'] = pd.to_datetime(df['published_at'])
+        # Безопасное преобразование дат
+        df['published_at'] = pd.to_datetime(df['published_at'], errors='coerce')
         moscow_tz = 'Europe/Moscow'
         df['published_at_moscow'] = df['published_at'].dt.tz_convert(moscow_tz)
         df['published_date'] = df['published_at_moscow'].dt.date
     elif 'published_date' not in df.columns:
-        # Если ни одной колонки нет, создаем пустую
         df['published_date'] = pd.NaT
     
     return df
@@ -67,39 +92,23 @@ def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: dat
     plt.rcParams['font.family'] = 'DejaVu Sans'
     plt.rcParams['axes.unicode_minus'] = False
     
-    # Используем исправленный фильтр для зарплат
-    def contains_monthly_pattern(text):
-        if pd.isna(text):
-            return False
-        text_lower = str(text).lower()
-        patterns = ['месяц', 'month', 'мес', 'ежемесячно', 'в месяц', 'per month', 'месячный']
-        return any(pattern in text_lower for pattern in patterns)
-    
+    # Фильтруем зарплатные данные
     city_salary_data = city_data[
         city_data['salary_period_name'].apply(contains_monthly_pattern) & 
         city_data['salary_to_net'].notna()
     ]
     
-    # Вычисляем даты
-    yesterday_date = today_date - timedelta(days=1)
-    week_start_date = today_date - timedelta(days=6)
+    # Получаем даты для сравнения
+    dates = get_comparison_dates(today_date)
     
-    # СТАТИСТИКА ЗА СЕГОДНЯ
-    city_today = city_data[city_data['published_date'] == today_date.date()]
-    today_count = len(city_today)
-    
-    city_yesterday = city_data[city_data['published_date'] == yesterday_date.date()]
-    yesterday_count = len(city_yesterday)
-    
-    # СТАТИСТИКА ЗА НЕДЕЛЮ
-    city_week = city_data[city_data['published_date'] >= week_start_date.date()]
-    city_salary_week = city_salary_data[city_data['published_date'] >= week_start_date.date()]  # ИСПРАВЛЕНО
+    # Данные за неделю (для графиков)
+    city_week = city_data[city_data['published_date'] >= dates['week_start']]
+    city_salary_week = city_salary_data[city_salary_data['published_date'] >= dates['week_start']]
     
     # ЗАРПЛАТНАЯ СТАТИСТИКА ЗА НЕДЕЛЮ
     weekly_salary_stats = []
     if len(city_salary_week) > 0:
-        # Группируем по дням
-        for day in pd.date_range(week_start_date.date(), today_date.date()):
+        for day in pd.date_range(dates['week_start'], dates['today']):
             day_date = day.date()
             day_data = city_salary_week[city_salary_week['published_date'] == day_date]
             if len(day_data) > 0:
@@ -112,32 +121,31 @@ def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: dat
     
     # СОЗДАЕМ ГРАФИК - только 2 графика
     fig = plt.figure(figsize=(12, 8), facecolor='white')
-    
-    # СЕТКА для двух графиков
     gs = fig.add_gridspec(2, 1, hspace=0.4, wspace=0.3)
     
     # 1. ЗАРПЛАТНАЯ ДИНАМИКА ЗА НЕДЕЛЮ (верхний график)
     if len(weekly_salary_stats) >= 2:
         ax_salary_trend = fig.add_subplot(gs[0, 0])
         
-        dates = [s['date'].strftime('%d.%m') for s in weekly_salary_stats]
+        dates_str = [s['date'].strftime('%d.%m') for s in weekly_salary_stats]
         avg_salaries = [s['avg_salary'] for s in weekly_salary_stats]
         median_salaries = [s['median_salary'] for s in weekly_salary_stats]
         
-        # Вычисляем среднее значение за весь период для горизонтальной линии
-        overall_avg_salary = sum(avg_salaries) / len(avg_salaries)
+        # Вычисляем среднее значение за весь период
+        overall_avg_salary = sum(avg_salaries) / len(avg_salaries) if avg_salaries else 0
         
         # Линия средних зарплат
-        ax_salary_trend.plot(dates, avg_salaries, 'o-', linewidth=3, 
+        ax_salary_trend.plot(dates_str, avg_salaries, 'o-', linewidth=3, 
                            markersize=8, color='#3498db', label='Средняя', alpha=0.8)
         
         # Линия медианных зарплат
-        ax_salary_trend.plot(dates, median_salaries, 's--', linewidth=2,
+        ax_salary_trend.plot(dates_str, median_salaries, 's--', linewidth=2,
                            markersize=6, color='#2ecc71', label='Медиана', alpha=0.8)
         
         # Горизонтальная линия среднего за весь период
-        ax_salary_trend.axhline(y=overall_avg_salary, color='red', linestyle=':', linewidth=2, 
-                               label=f'Среднее за период: {overall_avg_salary:,.0f} ₽', alpha=0.7)
+        if overall_avg_salary > 0:
+            ax_salary_trend.axhline(y=overall_avg_salary, color='red', linestyle=':', linewidth=2, 
+                                   label=f'Среднее за период: {overall_avg_salary:,.0f} ₽', alpha=0.7)
         
         ax_salary_trend.set_title(f'ДИНАМИКА ЗАРПЛАТ ЗА НЕДЕЛЮ - {city_name.upper()}', 
                                 fontsize=12, fontweight='bold', pad=10)
@@ -145,12 +153,17 @@ def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: dat
         ax_salary_trend.tick_params(axis='x', rotation=45)
         ax_salary_trend.grid(True, alpha=0.3, color='lightgray', linestyle='-', linewidth=0.5)
         ax_salary_trend.legend(loc='upper left')
-        
-        # Убираем заливку фона
         ax_salary_trend.set_facecolor('white')
         
         # Форматируем оси Y
         ax_salary_trend.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}'))
+        
+        # Добавляем значения
+        for i, (avg, med) in enumerate(zip(avg_salaries, median_salaries)):
+            ax_salary_trend.text(i, avg + max(avg_salaries)*0.02, f'{avg:,.0f}', 
+                               ha='center', fontsize=9, color='#3498db')
+            ax_salary_trend.text(i, med - max(median_salaries)*0.04, f'{med:,.0f}', 
+                               ha='center', fontsize=9, color='#2ecc71')
     else:
         ax_salary_trend = fig.add_subplot(gs[0, 0])
         ax_salary_trend.axis('off')
@@ -167,31 +180,31 @@ def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: dat
         bars = ax_activity.bar(dates_activity, daily_activity.values, 
                               color='#9b59b6', alpha=0.7, edgecolor='white')
         
-        # Подсвечиваем сегодня
-        today_str = today_date.strftime('%d.%m')
-        if today_str in dates_activity:
-            today_idx = dates_activity.index(today_str)
-            bars[today_idx].set_color('#e74c3c')
-            bars[today_idx].set_alpha(1.0)
+        # Подсвечиваем вчера (для сравнения)
+        yesterday_str = dates['yesterday'].strftime('%d.%m')
+        if yesterday_str in dates_activity:
+            yesterday_idx = dates_activity.index(yesterday_str)
+            bars[yesterday_idx].set_color('#e74c3c')
+            bars[yesterday_idx].set_alpha(1.0)
         
         ax_activity.set_title('ВАКАНСИИ ЗА НЕДЕЛЮ', 
                             fontsize=12, fontweight='bold', pad=10)
         ax_activity.set_ylabel('Количество', fontsize=10)
         ax_activity.tick_params(axis='x', rotation=45)
         ax_activity.grid(True, alpha=0.3, axis='y', color='lightgray', linestyle='-', linewidth=0.5)
-        
-        # Убираем заливку фона
         ax_activity.set_facecolor('white')
         
+        # Добавляем значения
+        for i, v in enumerate(daily_activity.values):
+            ax_activity.text(i, v + max(daily_activity.values)*0.02, str(v), 
+                           ha='center', fontsize=9)
     else:
         ax_activity = fig.add_subplot(gs[1, 0])
         ax_activity.axis('off')
         ax_activity.text(0.5, 0.5, 'Нет данных\nза неделю', 
                         ha='center', va='center', fontsize=12, color='#7f8c8d')
     
-    # Убираем заливку всего холста
     fig.patch.set_facecolor('white')
-    
     plt.tight_layout()
     
     # Сохраняем в буфер
@@ -204,109 +217,106 @@ def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: dat
     return buf
 
 def generate_telegram_text(city_name: str, city_data: pd.DataFrame, today_date: datetime):
-    """Генерация текста дайджеста для Telegram"""
+    """Генерация текста дайджеста для Telegram с корректным сравнением"""
     
-    # Используем исправленный фильтр для зарплат
-    def contains_monthly_pattern(text):
-        if pd.isna(text):
-            return False
-        text_lower = str(text).lower()
-        patterns = ['месяц', 'month', 'мес', 'ежемесячно', 'в месяц', 'per month', 'месячный']
-        return any(pattern in text_lower for pattern in patterns)
-    
+    # Фильтруем зарплатные данные
     city_salary_data = city_data[
         city_data['salary_period_name'].apply(contains_monthly_pattern) & 
         city_data['salary_to_net'].notna()
     ]
     
-    # Вычисляем даты
-    yesterday_date = today_date - timedelta(days=1)
-    week_start_date = today_date - timedelta(days=6)
+    # Получаем даты для сравнения
+    dates = get_comparison_dates(today_date)
     
-    # СТАТИСТИКА ЗА СЕГОДНЯ
-    city_today = city_data[city_data['published_date'] == today_date.date()]
-    today_count = len(city_today)
+    # Данные по дням
+    data_today = city_data[city_data['published_date'] == dates['today']]
+    data_yesterday = city_data[city_data['published_date'] == dates['yesterday']]
+    data_day_before = city_data[city_data['published_date'] == dates['day_before']]
+    data_week = city_data[city_data['published_date'] >= dates['week_start']]
+    data_salary_week = city_salary_data[city_salary_data['published_date'] >= dates['week_start']]
     
-    city_yesterday = city_data[city_data['published_date'] == yesterday_date.date()]
-    yesterday_count = len(city_yesterday)
+    # Зарплатные данные за сегодня
+    salary_today = city_salary_data[city_salary_data['published_date'] == dates['today']]
     
-    # СТАТИСТИКА ЗА НЕДЕЛЮ
-    city_week = city_data[city_data['published_date'] >= week_start_date.date()]
-    city_salary_week = city_salary_data[city_data['published_date'] >= week_start_date.date()]  # ИСПРАВЛЕНО
-    
-    # РАБОТОДАТЕЛИ
-    top_employers_today = city_today['employer'].value_counts().head(3)
-    
-    # КАЧЕСТВО ДАННЫХ
-    salary_coverage_week = (city_week['salary_to_net'].notna().sum() / len(city_week) * 100) if len(city_week) > 0 else 0
-    
-    # ЗАРПЛАТНАЯ СТАТИСТИКА НА СЕГОДНЯ
-    salary_today = city_salary_data[city_salary_data['published_date'] == today_date.date()]
-    
-    # Формируем текст для Telegram
-    daily_growth = today_count - yesterday_count
-    daily_growth_pct = (daily_growth / yesterday_count * 100) if yesterday_count > 0 else (float('inf') if today_count > 0 else 0)
-    
-    # Определяем вердикт
-    if today_count == 0:
-        verdict = "🔴 НЕТ НОВЫХ ВАКАНСИЙ"
-        verdict_color = "🔴"
-    elif daily_growth_pct > 50:
-        verdict = "🟢 БУРНЫЙ РОСТ"
-        verdict_color = "🟢"
-    elif daily_growth_pct > 10:
-        verdict = "🟢 ХОРОШИЙ РОСТ"
-        verdict_color = "🟢"
-    elif daily_growth_pct < -30:
-        verdict = "🔴 СИЛЬНЫЙ СПАД"
-        verdict_color = "🔴"
-    elif daily_growth_pct < 0:
-        verdict = "🟡 НЕБОЛЬШОЙ СПАД"
-        verdict_color = "🟡"
+    # 1. СРАВНЕНИЕ ПОЛНЫХ ДНЕЙ (вчера vs позавчера)
+    if len(data_day_before) > 0 and len(data_yesterday) > 0:
+        full_day_growth = len(data_yesterday) - len(data_day_before)
+        full_day_growth_pct = (full_day_growth / len(data_day_before)) * 100 if len(data_day_before) > 0 else 0
+        
+        if full_day_growth > 0:
+            comparison_emoji = "📈"
+            comparison_text = f"{comparison_emoji} Вчера vs Позавчера: +{full_day_growth:,} ({full_day_growth_pct:+.1f}%)"
+        elif full_day_growth < 0:
+            comparison_emoji = "📉"
+            comparison_text = f"{comparison_emoji} Вчера vs Позавчера: {full_day_growth:,} ({full_day_growth_pct:+.1f}%)"
+        else:
+            comparison_emoji = "➡️"
+            comparison_text = f"{comparison_emoji} Вчера vs Позавчера: без изменений"
     else:
-        verdict = "🟡 СТАБИЛЬНО"
-        verdict_color = "🟡"
+        comparison_text = "⏳ Недостаточно данных для сравнения полных дней"
     
-    telegram_text = f"""📊 Аналитика рынка вакансий
+    # 2. СЕГОДНЯ (частичный день)
+    today_count = len(data_today)
+    today_time = today_date.strftime('%H:%M')
+    today_text = f"📅 Сегодня (на {today_time}): {today_count:,} вакансий"
     
-📅 на 08:30 {today_date.strftime('%d.%m.%Y')}
-💡 Статистика за сегодня формируется на основе данных до 08:30 утра
+    # 3. ЗАРПЛАТЫ НА СЕГОДНЯ
+    salary_text = ""
+    if len(salary_today) > 0:
+        avg_salary = salary_today['salary_to_net'].mean()
+        median_salary = salary_today['salary_to_net'].median()
+        q25 = salary_today['salary_to_net'].quantile(0.25)
+        q75 = salary_today['salary_to_net'].quantile(0.75)
+        
+        salary_text = f"""
+💰 Зарплаты сегодня ({len(salary_today):,} вакансий):
 
+✓ Средняя: {safe_format_number(avg_salary)}
+✓ Медианная: {safe_format_number(median_salary)}
+✓ 25% получают до: {safe_format_number(q25)}
+✓ 75% получают до: {safe_format_number(q75)}
+✓ Вилка: {safe_format_number(q75 - q25)}
+"""
+    else:
+        salary_text = "💰 Сегодня нет данных о зарплатах"
+    
+    # 4. ТОП РАБОТОДАТЕЛИ СЕГОДНЯ
+    employers_text = ""
+    top_employers_today = data_today['employer'].value_counts().head(3)
+    if len(top_employers_today) > 0:
+        employers_text = "🏢 ТОП работодателей сегодня:\n\n"
+        for i, (employer, count) in enumerate(top_employers_today.items(), 1):
+            employer_short = employer[:25] + '...' if len(employer) > 25 else employer
+            employers_text += f"{i}. {employer_short} - {count:,} вакансий\n"
+    else:
+        employers_text = "🏢 Сегодня нет данных о работодателях"
+    
+    # 5. ОБЩАЯ СТАТИСТИКА ПО ГОРОДУ
+    general_stats = f"""
+📊 Сводка по {city_name}:
 
-📈 Ключевые показатели:
-
-✓ Сегодня: {today_count:,} вакансий ({daily_growth:+,d}, {daily_growth_pct:+.1f}%)
-✓ За неделю: {len(city_week):,} вакансий
-✓ С зарплатой: {len(city_salary_week):,} вакансий
-✓ Покрытие зарплатами: {salary_coverage_week:.0f}%
-
-💰 Зарплаты на сегодня ({len(salary_today):,} вакансий):
-
-✓ Средняя: {salary_today['salary_to_net'].mean():,.0f} ₽
-✓ Медианная: {salary_today['salary_to_net'].median():,.0f} ₽
-✓ 25% получают до: {salary_today['salary_to_net'].quantile(0.25):,.0f} ₽
-✓ 75% получают до: {salary_today['salary_to_net'].quantile(0.75):,.0f} ₽
-
-🏢 ТОП-3 работодателей:
-
+✓ Всего вакансий: {len(city_data):,}
+✓ С зарплатой 'за месяц': {len(city_salary_data):,}
+✓ Средняя зарплата: {safe_format_number(city_salary_data['salary_to_net'].mean())}
+✓ Период данных: {city_data['published_date'].min()} - {dates['today']}
 """
     
-    for i, (employer, count) in enumerate(top_employers_today.items(), 1):
-        employer_short = employer[:25] + '...' if len(employer) > 25 else employer
-        telegram_text += f"{i}. {employer_short} - {count:,} вакансий\n"
-    
-    telegram_text += f"""
+    # Формируем финальное сообщение
+    telegram_text = f"""📊 Аналитика рынка вакансий - {city_name}
 
-🎯 Динамика: {verdict_color} {verdict}
+{comparison_text}
+{today_text}
 
-📊 Сводная инфа по городу:
+📈 За неделю: {len(data_week):,} вакансий
+💰 С зарплатой за неделю: {len(data_salary_week):,}
 
-✓ Вакансий: {len(city_data):,}
-✓ С зарплатой: {len(city_salary_data):,}
-✓ Средняя зарплата: {city_salary_data['salary_to_net'].mean():,.0f} ₽
-✓ Период: {city_data['published_date'].min()} - {today_date.date()}
+{salary_text}
 
-⏰ Обновлено: {datetime.now().strftime('%H:%M')}
+{employers_text}
+
+{general_stats}
+
+⏰ Обновлено: {today_date.strftime('%H:%M')}
 """
     
     return telegram_text
