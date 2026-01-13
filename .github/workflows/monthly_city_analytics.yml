@@ -1,0 +1,69 @@
+name: Monthly Report
+
+on:
+  schedule:
+    - cron: '30 4 1 * *'  # 07:30 МСК 1 числа
+  workflow_dispatch:
+
+jobs:
+  run-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        echo "📦 Устанавливаем зависимости..."
+        cd courier_ecosystem/scripts
+        pip install -r ../../requirements.txt
+        echo "✅ Зависимости установлены"
+    
+    - name: Run monthly analytics
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      run: |
+        echo "🚀 Запуск месячного отчета..."
+        echo "📅 Дата: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "🏙️ Запуск всех городов"
+        
+        cd courier_ecosystem/scripts
+        
+        echo "🔧 Проверяем наличие скрипта..."
+        ls -la monthly_analytics.py || echo "❌ Скрипт не найден"
+        
+        echo "📊 Запускаем аналитику..."
+        python monthly_analytics.py
+        
+        EXIT_CODE=$?
+        
+        if [ $EXIT_CODE -eq 0 ]; then
+          echo "✅ Отчет успешно сгенерирован и отправлен!"
+        else
+          echo "❌ Ошибка при генерации отчета (код: $EXIT_CODE)"
+          exit $EXIT_CODE
+        fi
+    
+    - name: Success log
+      if: success()
+      run: |
+        echo "🎉 Месячный отчет выполнен успешно!"
+        echo "📅 Время: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "🔗 GitHub Run ID: ${{ github.run_id }}"
+    
+    - name: Failure log
+      if: failure()
+      run: |
+        echo "💥 Месячный отчет завершился с ошибкой!"
+        echo "📅 Время: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "🔗 GitHub Run ID: ${{ github.run_id }}"
+        echo "⚠️ Проверьте логи выше для деталей"
