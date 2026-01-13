@@ -18,6 +18,10 @@ CITIES = {
     "nsk": {"channel": "@courier_jobs_nsk", "name": "Новосибирск"},
     "ekb": {"channel": "@courier_jobs_ekb", "name": "Екатеринбург"},
     "kzn": {"channel": "@courier_jobs_kzn", "name": "Казань"},
+    # ↓ ДОБАВИТЬ 3 НОВЫХ ГОРОДА ↓
+    "nng": {"channel": "@courier_jobs_nng", "name": "Нижний Новгород"},
+    "che": {"channel": "@courier_jobs_che", "name": "Челябинск"},
+    "krk": {"channel": "@courier_jobs_krk", "name": "Красноярск"},
 }
 
 # Вспомогательные функции
