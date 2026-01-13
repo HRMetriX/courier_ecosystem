@@ -123,6 +123,11 @@ def load_monthly_data_from_supabase(month_start: datetime, month_end: datetime):
     df = pd.DataFrame(all_data)
     print(f"\n✅ Итого загружено {len(df)} строк за месяц")
     
+    # Если данных нет, возвращаем пустой DataFrame
+    if len(df) == 0:
+        print("⚠️ Нет данных за указанный период")
+        return pd.DataFrame()
+    
     # Преобразуем даты
     if 'published_at' in df.columns:
         df['published_at'] = pd.to_datetime(df['published_at'], errors='coerce')
@@ -206,7 +211,7 @@ def analyze_monthly_metrics(city_data: pd.DataFrame, prev_month_data: pd.DataFra
                 metrics['top_employers_salary'] = employer_avg_salary.nlargest(5, 'avg_salary')['avg_salary'].to_dict()
     
     # 6. Сравнение с предыдущим месяцем
-    if prev_month_data is not None:
+    if prev_month_data is not None and len(prev_month_data) > 0 and 'city_slug' in prev_month_data.columns:
         prev_month_metrics = analyze_monthly_metrics(prev_month_data)
         
         metrics['prev_month_total'] = prev_month_metrics['total_vacancies']
@@ -611,6 +616,16 @@ async def main_monthly_report():
     try:
         df_previous = load_monthly_data_from_supabase(prev_month_start, prev_month_end)
         print(f"📊 Данные за предыдущий месяц: {len(df_previous)} строк")
+        
+        # Если данных нет или DataFrame пустой
+        if df_previous is None or len(df_previous) == 0:
+            print("ℹ️ Нет данных за предыдущий месяц для сравнения")
+            df_previous = None
+        elif 'city_slug' not in df_previous.columns:
+            print("⚠️ В данных за предыдущий месяц нет колонки 'city_slug'")
+            print(f"   Доступные колонки: {list(df_previous.columns)}")
+            df_previous = None
+            
     except Exception as e:
         print(f"⚠️ Не удалось загрузить данные за предыдущий месяц: {e}")
         df_previous = None
@@ -638,8 +653,15 @@ async def main_monthly_report():
         
         # Фильтруем предыдущие данные для этого города
         prev_city_data = None
-        if df_previous is not None:
+        if df_previous is not None and len(df_previous) > 0 and 'city_slug' in df_previous.columns:
             prev_city_data = df_previous[df_previous['city_slug'] == city_slug]
+            if len(prev_city_data) > 0:
+                print(f"📊 Данные за предыдущий месяц для {city_info['name']}: {len(prev_city_data)} строк")
+            else:
+                print(f"ℹ️ Нет данных за предыдущий месяц для {city_info['name']}")
+                prev_city_data = None
+        else:
+            print(f"ℹ️ Нет данных за предыдущий месяц для сравнения с {city_info['name']}")
         
         try:
             # Анализируем метрики
