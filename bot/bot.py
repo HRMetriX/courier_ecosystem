@@ -29,6 +29,9 @@ CITIES = {
     "kazan": {"name": "Казань", "channel": "@courier_jobs_kzn"},
     "ekb": {"name": "Екатеринбург", "channel": "@courier_jobs_ekb"},
     "novosib": {"name": "Новосибирск", "channel": "@courier_jobs_nsk"},
+    "nnov": {"name": "Нижний Новгород", "channel": "@courier_jobs_nng"},
+    "chelyabinsk": {"name": "Челябинск", "channel": "@courier_jobs_che"},
+    "krasnoyarsk": {"name": "Красноярск", "channel": "@courier_jobs_krk"},
 }
 
 # === ЛОГГИРОВАНИЕ ===
