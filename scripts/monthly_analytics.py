@@ -144,8 +144,8 @@ def analyze_monthly_metrics(city_data: pd.DataFrame, prev_month_data: pd.DataFra
     
     # Только месячные зарплаты
     monthly_salary_data = city_data[
-        (city_data['salary_period_name'] == 'За месяц') & 
-        (city_data['salary_to_net'].notna())
+        city_data['salary_period_name'].str.contains('месяц', case=False, na=False) & 
+        city_data['salary_to_net'].notna()
     ]
     
     metrics = {}
