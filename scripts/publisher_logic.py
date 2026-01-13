@@ -38,7 +38,7 @@ if not logger_ready:
     PUBLISH_CONFIG = {
         "criteria": {
             "max_vacancy_age_days": 30,
-            "max_parsed_age_days": 7,
+            "max_parsed_age_days": 14,
             "currency": "RUR",
         },
         "publication": {
