@@ -21,6 +21,9 @@ CITIES = {
     "nsk": {"area_id": 4, "channel": "@courier_jobs_nsk"},
     "ekb": {"area_id": 3, "channel": "@courier_jobs_ekb"},
     "kzn": {"area_id": 88, "channel": "@courier_jobs_kzn"},
+    "nng": {"area_id": 66, "channel": "@courier_jobs_nng"},
+    "che": {"area_id": 104, "channel": "@courier_jobs_che"},
+    "krk": {"area_id": 54, "channel": "@courier_jobs_krk"},
 }
 
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
