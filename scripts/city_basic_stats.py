@@ -6,6 +6,10 @@ from io import BytesIO
 from supabase import create_client
 import asyncio
 from telegram import Bot
+import pytz  # Добавляем импорт
+
+# Константа для московского часового пояса
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 # Конфигурация
 CITIES = {
@@ -77,8 +81,8 @@ def load_data_from_supabase():
     if 'published_at' in df.columns:
         # Безопасное преобразование дат
         df['published_at'] = pd.to_datetime(df['published_at'], errors='coerce')
-        moscow_tz = 'Europe/Moscow'
-        df['published_at_moscow'] = df['published_at'].dt.tz_convert(moscow_tz)
+        # Конвертируем в московское время
+        df['published_at_moscow'] = df['published_at'].dt.tz_convert(MOSCOW_TZ)
         df['published_date'] = df['published_at_moscow'].dt.date
     elif 'published_date' not in df.columns:
         df['published_date'] = pd.NaT
@@ -216,8 +220,12 @@ def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: dat
     buf.seek(0)
     return buf
 
-def generate_telegram_text(city_name: str, city_data: pd.DataFrame, today_date: datetime):
+def generate_telegram_text(city_name: str, city_data: pd.DataFrame):
     """Генерация текста дайджеста для Telegram с корректным сравнением"""
+    
+    # Текущее время по Москве
+    moscow_now = datetime.now(MOSCOW_TZ)
+    moscow_time_str = moscow_now.strftime('%H:%M')
     
     # Фильтруем зарплатные данные
     city_salary_data = city_data[
@@ -225,8 +233,8 @@ def generate_telegram_text(city_name: str, city_data: pd.DataFrame, today_date: 
         city_data['salary_to_net'].notna()
     ]
     
-    # Получаем даты для сравнения
-    dates = get_comparison_dates(today_date)
+    # Получаем даты для сравнения (относительно московского времени)
+    dates = get_comparison_dates(moscow_now)
     
     # Данные по дням
     data_today = city_data[city_data['published_date'] == dates['today']]
@@ -257,8 +265,7 @@ def generate_telegram_text(city_name: str, city_data: pd.DataFrame, today_date: 
     
     # 2. СЕГОДНЯ (частичный день)
     today_count = len(data_today)
-    today_time = today_date.strftime('%H:%M')
-    today_text = f"📅 Сегодня (на {today_time}): {today_count:,} вакансий"
+    today_text = f"📅 Сегодня (на {moscow_time_str}): {today_count:,} вакансий"
     
     # 3. ЗАРПЛАТЫ НА СЕГОДНЯ
     salary_text = ""
@@ -316,7 +323,7 @@ def generate_telegram_text(city_name: str, city_data: pd.DataFrame, today_date: 
 
 {general_stats}
 
-⏰ Обновлено: {today_date.strftime('%H:%M')}
+⏰ Обновлено: {moscow_time_str} МСК
 """
     
     return telegram_text
@@ -354,9 +361,6 @@ async def main():
     if not bot_token:
         raise ValueError("Не найдена переменная окружения TG_BOT_TOKEN")
     
-    # Текущая дата
-    today_date = datetime.now()
-    
     # Проходим по каждому городу
     for city_slug, city_info in CITIES.items():
         print(f"\n📍 Обработка города: {city_info['name']} ({city_slug})")
@@ -369,13 +373,16 @@ async def main():
             continue
         
         try:
+            # Получаем текущее московское время для дайджеста
+            moscow_now = datetime.now(MOSCOW_TZ)
+            
             # Создаем изображение
             print(f"🎨 Генерируем изображение для {city_info['name']}...")
-            image_buf = create_digest_image(city_info['name'], city_data, today_date)
+            image_buf = create_digest_image(city_info['name'], city_data, moscow_now)
             
             # Генерируем текст
             print(f"📝 Генерируем текст для {city_info['name']}...")
-            text = generate_telegram_text(city_info['name'], city_data, today_date)
+            text = generate_telegram_text(city_info['name'], city_data)
             
             # Отправляем в канал
             print(f"📤 Отправляем дайджест в канал {city_info['channel']}...")
