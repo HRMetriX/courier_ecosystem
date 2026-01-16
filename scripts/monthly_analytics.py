@@ -134,16 +134,17 @@ def load_monthly_data_from_supabase(month_start: datetime, month_end: datetime):
     
     supabase_client = create_client(supabase_url, supabase_key)
     
-    # Загружаем данные за нужный месяц
+    # --- ОБНОВЛЕНО: Фильтруем по first_seen_in_db ---
     all_data = []
     page = 0
     limit = 1000
 
     while True:
+        # Фильтруем по first_seen_in_db вместо published_at
         response = supabase_client.table("vacancies") \
             .select("*") \
-            .gte('published_at', month_start.isoformat()) \
-            .lte('published_at', month_end.isoformat()) \
+            .gte('first_seen_in_db', month_start.isoformat()) \
+            .lte('first_seen_in_db', month_end.isoformat()) \
             .range(page * limit, (page + 1) * limit - 1) \
             .execute()
 
@@ -155,6 +156,7 @@ def load_monthly_data_from_supabase(month_start: datetime, month_end: datetime):
         print(f"  Загружено страниц: {page}, всего строк: {len(all_data)}")
 
     df = pd.DataFrame(all_data)
+    # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
     if len(df) == 0:
         print(f"  ⚠️ Нет данных за период {month_start.strftime('%d.%m.%Y')} - {month_end.strftime('%d.%m.%Y')}")
@@ -162,15 +164,31 @@ def load_monthly_data_from_supabase(month_start: datetime, month_end: datetime):
     
     print(f"  ✅ Итого загружено {len(df)} строк")
     
-    # Преобразуем даты
-    if 'published_at' in df.columns:
-        df['published_at'] = pd.to_datetime(df['published_at'], errors='coerce')
-        df['published_at_moscow'] = df['published_at'].dt.tz_convert(MOSCOW_TZ)
-        df['published_date'] = df['published_at_moscow'].dt.date
-        df['published_day'] = df['published_at_moscow'].dt.day
-        df['published_week'] = df['published_at_moscow'].dt.isocalendar().week
-        df['published_weekday'] = df['published_at_moscow'].dt.day_name()
+    # --- ОБНОВЛЕНО: Преобразуем даты из first_seen_in_db ---
+    if 'first_seen_in_db' in df.columns:
+        df['first_seen_in_db'] = pd.to_datetime(df['first_seen_in_db'], errors='coerce')
+        # Конвертируем в московское время и вычисляем даты/дни/недели/дни_недели
+        df['first_seen_moscow'] = df['first_seen_in_db'].dt.tz_convert(MOSCOW_TZ)
+        df['published_date'] = df['first_seen_moscow'].dt.date # <-- Это теперь из first_seen_in_db
+        df['published_day'] = df['first_seen_moscow'].dt.day # <-- Это теперь из first_seen_in_db
+        df['published_week'] = df['first_seen_moscow'].dt.isocalendar().week # <-- Это теперь из first_seen_in_db
+        df['published_weekday'] = df['first_seen_moscow'].dt.day_name() # <-- Это теперь из first_seen_in_db
+    else:
+        print("⚠️ Колонка 'first_seen_in_db' не найдена в данных.")
+        # Если колонка отсутствует (временно), можно вернуться к старой логике или выдать ошибку
+        # raise ValueError("Колонка 'first_seen_in_db' обязательна для новой логики.")
+        df['published_date'] = pd.NaT
+        df['published_day'] = pd.NaT
+        df['published_week'] = pd.NaT
+        df['published_weekday'] = pd.NaT
+    # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
+    # 'published_at' может остаться для других целей, но временные метки для анализа теперь из first_seen_in_db
+    # if 'published_at' in df.columns: # Не трогаем published_at, если он нужен для других целей
+    #     df['published_at'] = pd.to_datetime(df['published_at'], errors='coerce')
+    #     df['published_at_moscow'] = df['published_at'].dt.tz_convert(MOSCOW_TZ)
+    #     # df['published_date'] уже вычислено из first_seen_in_db
+
     # Нормализуем текстовые поля для сравнения
     text_columns = ['salary_period_name', 'schedule_name', 'experience_name', 'employment_form_name']
     for col in text_columns:
@@ -231,12 +249,14 @@ def analyze_monthly_metrics(city_data: pd.DataFrame, prev_month_data: pd.DataFra
             metrics['vacancies_with_range'] = 0
         
         # Анализ динамики зарплат по дням для EMA
+        # --- ОБНОВЛЕНО: Используем published_day, которое теперь из first_seen_in_db ---
         if 'published_day' in monthly_salary_data.columns:
             daily_avg_salary = monthly_salary_data.groupby('published_day')['salary_to_net'].mean()
             if len(daily_avg_salary) >= 7:
                 ema_series = calculate_ema(daily_avg_salary.sort_index(), span=7)
                 trend_analysis = analyze_trend_from_ema(ema_series)
                 metrics['trend_analysis'] = trend_analysis
+        # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
     # 3. Анализ графиков работы
     if 'schedule_name_normalized' in city_data.columns:
@@ -245,10 +265,12 @@ def analyze_monthly_metrics(city_data: pd.DataFrame, prev_month_data: pd.DataFra
         metrics['total_schedules'] = len(schedule_counts)
     
     # 4. Анализ дней недели
+    # --- ОБНОВЛЕНО: Используем published_weekday, которое теперь из first_seen_in_db ---
     if 'published_weekday' in city_data.columns:
         weekday_counts = city_data['published_weekday'].value_counts()
         metrics['top_weekday'] = weekday_counts.index[0] if len(weekday_counts) > 0 else None
         metrics['weekday_counts'] = weekday_counts.to_dict()
+    # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
     # 5. ТОП работодателей
     if 'employer' in city_data.columns:
@@ -340,6 +362,7 @@ def create_monthly_report_image(city_name: str, city_data: pd.DataFrame, metrics
     
     # 2. АКТИВНОСТЬ ПО НЕДЕЛЯМ (верхний правый)
     ax2 = plt.subplot(3, 2, 2)
+    # --- ОБНОВЛЕНО: Используем published_week, которое теперь из first_seen_in_db ---
     if 'published_week' in city_data.columns and len(city_data) > 0:
         weekly_counts = city_data.groupby('published_week').size()
         if len(weekly_counts) > 0:
@@ -361,6 +384,7 @@ def create_monthly_report_image(city_name: str, city_data: pd.DataFrame, metrics
         ax2.text(0.5, 0.5, 'Нет данных\nпо неделям', ha='center', va='center',
                 fontsize=10, color='gray')
         ax2.set_title('АКТИВНОСТЬ ПО НЕДЕЛЯМ', fontsize=11, fontweight='bold')
+    # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
     # 3. ГРАФИКИ РАБОТЫ (средний левый)
     ax3 = plt.subplot(3, 2, 3)
@@ -400,6 +424,7 @@ def create_monthly_report_image(city_name: str, city_data: pd.DataFrame, metrics
     
     # 4. ДНИ НЕДЕЛИ (средний правый)
     ax4 = plt.subplot(3, 2, 4)
+    # --- ОБНОВЛЕНО: Используем published_weekday, которое теперь из first_seen_in_db ---
     if 'published_weekday' in city_data.columns and len(city_data) > 0:
         # Порядок дней недели
         days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -427,6 +452,7 @@ def create_monthly_report_image(city_name: str, city_data: pd.DataFrame, metrics
         ax4.text(0.5, 0.5, 'Нет данных\nпо дням недели', ha='center', va='center',
                 fontsize=10, color='gray')
         ax4.set_title('АКТИВНОСТЬ ПО ДНЯМ НЕДЕЛИ', fontsize=11, fontweight='bold')
+    # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
     # 5. ТОП РАБОТОДАТЕЛИ ПО КОЛИЧЕСТВУ (нижний левый)
     ax5 = plt.subplot(3, 2, 5)
@@ -461,6 +487,7 @@ def create_monthly_report_image(city_name: str, city_data: pd.DataFrame, metrics
     
     # 6. ДИНАМИКА ЗАРПЛАТ С EMA (нижний правый)
     ax6 = plt.subplot(3, 2, 6)
+    # --- ОБНОВЛЕНО: Используем published_day, которое теперь из first_seen_in_db ---
     if 'published_day' in city_data.columns and len(monthly_salary_data) > 0:
         daily_avg_salary = monthly_salary_data.groupby('published_day')['salary_to_net'].mean()
         daily_median_salary = monthly_salary_data.groupby('published_day')['salary_to_net'].median()
@@ -535,6 +562,7 @@ def create_monthly_report_image(city_name: str, city_data: pd.DataFrame, metrics
         ax6.text(0.5, 0.5, 'Нет данных\nдля анализа тренда', 
                 ha='center', va='center', fontsize=10, color='gray')
         ax6.set_title('ДИНАМИКА ЗАРПЛАТ С АНАЛИЗОМ ТРЕНДА', fontsize=11, fontweight='bold')
+    # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
     # Общий заголовок
     month_name_ru = {
