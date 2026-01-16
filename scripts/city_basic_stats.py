@@ -82,15 +82,25 @@ def load_data_from_supabase():
     print(f"\n✅ Итого загружено {len(df)} строк")
     
     # Преобразуем колонки для совместимости
-    if 'published_at' in df.columns:
+    # --- ОБНОВЛЕНО ---
+    if 'first_seen_in_db' in df.columns:
         # Безопасное преобразование дат
-        df['published_at'] = pd.to_datetime(df['published_at'], errors='coerce')
-        # Конвертируем в московское время
-        df['published_at_moscow'] = df['published_at'].dt.tz_convert(MOSCOW_TZ)
-        df['published_date'] = df['published_at_moscow'].dt.date
-    elif 'published_date' not in df.columns:
-        df['published_date'] = pd.NaT
+        df['first_seen_in_db'] = pd.to_datetime(df['first_seen_in_db'], errors='coerce')
+        # Конвертируем в московское время и вычисляем published_date
+        df['published_date'] = df['first_seen_in_db'].dt.tz_convert(MOSCOW_TZ).dt.date
+    else:
+        print("⚠️ Колонка 'first_seen_in_db' не найдена в данных.")
+        # Если колонка отсутствует (например, временно), можно вернуться к старой логике или выдать ошибку
+        # raise ValueError("Колонка 'first_seen_in_db' обязательна для новой логики.")
+        df['published_date'] = pd.NaT # Или другое действие по умолчанию
+    # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
+    # 'published_at' может остаться для других целей, но published_date теперь из first_seen_in_db
+    if 'published_at' in df.columns:
+        df['published_at'] = pd.to_datetime(df['published_at'], errors='coerce')
+        df['published_at_moscow'] = df['published_at'].dt.tz_convert(MOSCOW_TZ)
+        # df['published_date'] уже вычислено выше из first_seen_in_db
+
     return df
 
 def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: datetime):
@@ -110,8 +120,11 @@ def create_digest_image(city_name: str, city_data: pd.DataFrame, today_date: dat
     dates = get_comparison_dates(today_date)
     
     # Данные за неделю (для графиков)
+    # --- ОБНОВЛЕНО ---
+    # Используем published_date, которое теперь из first_seen_in_db
     city_week = city_data[city_data['published_date'] >= dates['week_start']]
     city_salary_week = city_salary_data[city_salary_data['published_date'] >= dates['week_start']]
+    # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
     # ЗАРПЛАТНАЯ СТАТИСТИКА ЗА НЕДЕЛЮ
     weekly_salary_stats = []
@@ -240,12 +253,14 @@ def generate_telegram_text(city_name: str, city_data: pd.DataFrame):
     # Получаем даты для сравнения (относительно московского времени)
     dates = get_comparison_dates(moscow_now)
     
-    # Данные по дням
+    # --- ОБНОВЛЕНО ---
+    # Данные по дням теперь учитывают published_date, вычисленное из first_seen_in_db
     data_today = city_data[city_data['published_date'] == dates['today']]
     data_yesterday = city_data[city_data['published_date'] == dates['yesterday']]
     data_day_before = city_data[city_data['published_date'] == dates['day_before']]
     data_week = city_data[city_data['published_date'] >= dates['week_start']]
     data_salary_week = city_salary_data[city_salary_data['published_date'] >= dates['week_start']]
+    # --- /КОНЕЦ ОБНОВЛЕНИЯ ---
     
     # Зарплатные данные за сегодня
     salary_today = city_salary_data[city_salary_data['published_date'] == dates['today']]
@@ -357,8 +372,8 @@ async def main():
         print(f"Доступные колонки: {list(df.columns)}")
         raise ValueError(f"Отсутствуют столбцы: {missing_columns}")
     
-    # Приводим published_date к datetime
-    df['published_date'] = pd.to_datetime(df['published_date']).dt.date
+    # Приводим published_date к datetime.date, если нужно (обычно не обязательно, но для уверенности)
+    # df['published_date'] уже вычислен как date в load_data_from_supabase
     
     # Получаем токен бота
     bot_token = os.environ.get("TG_BOT_TOKEN")
