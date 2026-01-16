@@ -124,7 +124,9 @@ def format_vacancy(vacancy: Dict, city_slug: str) -> Dict:
             "channel_id": CITIES.get(city_slug, {}).get("channel", ""),
             
             # Временные метки
+            # Для first_seen_in_db используем published_at из HH
             "published_at": vacancy.get("published_at", ""),
+            "first_seen_in_db": vacancy.get("published_at", ""), # <-- Добавляем published_at как first_seen_in_db
             
             # Ссылки
             "external_url": vacancy.get("alternate_url", ""),
@@ -132,6 +134,7 @@ def format_vacancy(vacancy: Dict, city_slug: str) -> Dict:
     
     except Exception as e:
         # Минимальные данные при ошибке
+        # first_seen_in_db устанавливаем из published_at
         return {
             "external_id": str(vacancy.get("id", "")),
             "source": "hh",
@@ -139,6 +142,7 @@ def format_vacancy(vacancy: Dict, city_slug: str) -> Dict:
             "employer": str(vacancy.get("employer", {}).get("name", "")),
             "city_slug": city_slug,
             "published_at": vacancy.get("published_at", ""),
+            "first_seen_in_db": vacancy.get("published_at", ""), # <-- Также добавляем сюда
             "external_url": vacancy.get("alternate_url", ""),
         }
 
@@ -210,18 +214,24 @@ def process_industry(area_id: int, industry_id: str, date_from, date_to) -> List
 
 def upsert_vacancy(supabase_client, vacancy_data: Dict):
     """Вставляет или обновляет вакансию в базе."""
+    # Убедимся, что last_updated_in_db не передаётся из Python, пусть управляется триггером
+    # Исключим last_updated_in_db из данных для отправки
+    data_to_send = {k: v for k, v in vacancy_data.items() if k != "last_updated_in_db"}
+
+    # Удаляем first_seen_in_db из data_to_send, так как его устанавливает триггер при INSERT
+    # и не должен менять при UPDATE
+    data_to_send.pop("first_seen_in_db", None) # Используем pop с default None, на всякий случай
+
     try:
-        supabase_client.table("vacancies").insert(vacancy_data).execute()
+        supabase_client.table("vacancies").insert(data_to_send).execute()
         return "inserted"
     except Exception as e:
         if "duplicate key" in str(e).lower() or "23505" in str(e):
-            update_data = {
-                **vacancy_data, 
-            #    "is_posted": False,
-            #    "updated_at": datetime.now().isoformat()
-            }
+            # При UPDATE НЕ передаём first_seen_in_db
+            # Убедимся, что first_seen_in_db и last_updated_in_db не входят в update_data
+            update_data = {k: v for k, v in data_to_send.items() if k not in ["first_seen_in_db", "last_updated_in_db"]}
             supabase_client.table("vacancies").update(update_data).eq(
-                "external_id", vacancy_data["external_id"]
+                "external_id", data_to_send["external_id"]
             ).eq("source", "hh").execute()
             return "updated"
         else:
