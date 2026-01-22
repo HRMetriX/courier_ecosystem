@@ -136,7 +136,7 @@ def get_vacancies_for_publication(
     НОВАЯ ЛОГИКА:
     1. Пытаемся найти вакансии по основным критериям (новые за N дней, RUR, неопубликованные).
     2. Если подходящих мало (< target_count), используем fallback:
-       - Берём самые свежие неопубликованные вакансии в городе.
+       - Берём самые свежие неопубликованные вакансии в городе (любая валюта).
        - Сначала с зарплатой, потом без, до достижения target_count или исчерпания запаса.
     """
     # Рассчитываем даты-ограничители для основного запроса
@@ -150,8 +150,6 @@ def get_vacancies_for_publication(
     logger.info(f"  - is_posted = FALSE")
 
     # --- ОСНОВНОЙ ЗАПРОС ---
-    initial_limit = target_count * 5  # Берем с запасом, чтобы точно набрать после выборки
-
     query_main = (
         supabase_client
         .table("vacancies")
@@ -160,7 +158,6 @@ def get_vacancies_for_publication(
         .eq("is_posted", False)
         .eq("currency", PUBLISH_CONFIG["criteria"]["currency"])
         .gte("first_seen_in_db", max_vacancy_date.isoformat())
-        # Сортировка не нужна, так как будет случайный выбор
     )
 
     try:
@@ -175,9 +172,9 @@ def get_vacancies_for_publication(
         logger.info(f"  - Основные: С зарплатой: {len(with_salary_main)}, Без зарплаты: {len(without_salary_main)}")
 
         # Случайно выбираем из каждой группы основного запроса
-        selected_with_salary_main = random.sample(with_salary_main, min(target_count, len(with_salary_main)))
+        selected_with_salary_main = random.sample(with_salary_main, min(target_count, len(with_salary_main))) if with_salary_main else []
         remaining_slots_after_main = target_count - len(selected_with_salary_main)
-        selected_without_salary_main = random.sample(without_salary_main, min(remaining_slots_after_main, len(without_salary_main)))
+        selected_without_salary_main = random.sample(without_salary_main, min(remaining_slots_after_main, len(without_salary_main))) if without_salary_main else []
 
         # Объединяем результаты основного запроса
         selected_vacancies_main = selected_with_salary_main + selected_without_salary_main
@@ -192,39 +189,40 @@ def get_vacancies_for_publication(
             slots_needed = target_count - current_selection_count
 
             # --- FALLBACK ЗАПРОС ---
-            # Берём все неопубликованные вакансии в городе, отсортированные по дате (свежие первые)
-            # Исключаем уже выбранные вакансии из основного запроса
+            # Берём все ОСТАЛЬНЫЕ неопубликованные вакансии в городе, отсортированные по дате (свежие первые)
+            # Исключаем уже выбранные вакансии из основного запроса по ID
             already_selected_ids = {v['id'] for v in selected_vacancies_main}
 
-            query_fallback = (
+            # Подготовим список ID для исключения (если он не пуст)
+            ids_to_exclude = list(already_selected_ids)
+            fallback_query = (
                 supabase_client
                 .table("vacancies")
                 .select("*")
                 .eq("city_slug", city_slug)
                 .eq("is_posted", False)
-                .neq("currency", PUBLISH_CONFIG["criteria"]["currency"]) # Исключаем уже отфильтрованные по валюте из основного
-                # или .not_.in_("id", list(already_selected_ids)) # Можно добавить, если нужно исключить ID
                 .order("first_seen_in_db", desc=True) # Сортировка по дате, свежие первые
                 .limit(slots_needed * 5) # С запасом
             )
 
+            # Если есть, что исключать
+            if ids_to_exclude:
+                 fallback_query = fallback_query.not_.in_("id", ids_to_exclude)
+
             # Выполняем fallback-запрос
-            response_fallback = query_fallback.execute()
-            logger.info(f"  - Fallback: найдено {len(response_fallback.data)} потенциальных вакансий")
+            response_fallback = fallback_query.execute()
+            logger.info(f"  - Fallback: найдено {len(response_fallback.data)} потенциальных вакансий (исключая основной отбор)")
 
-            # Отфильтруем по ID, если нужно исключить основной отбор
-            fallback_filtered_by_id = [v for v in response_fallback.data if v['id'] not in already_selected_ids]
-
-            # Разделяем fallback-вакансии
-            with_salary_fb = [v for v in fallback_filtered_by_id if v.get('salary_to_net') is not None]
-            without_salary_fb = [v for v in fallback_filtered_by_id if v.get('salary_to_net') is None]
+            # Разделяем fallback-вакансии (уже отфильтрованы по ID)
+            with_salary_fb = [v for v in response_fallback.data if v.get('salary_to_net') is not None]
+            without_salary_fb = [v for v in response_fallback.data if v.get('salary_to_net') is None]
 
             logger.info(f"  - Fallback: С зарплатой: {len(with_salary_fb)}, Без зарплаты: {len(without_salary_fb)}")
 
             # Случайно выбираем из fallback, с приоритетом "с зарплатой"
-            selected_with_salary_fb = random.sample(with_salary_fb, min(slots_needed, len(with_salary_fb)))
+            selected_with_salary_fb = random.sample(with_salary_fb, min(slots_needed, len(with_salary_fb))) if with_salary_fb else []
             remaining_slots_after_fb_salary = slots_needed - len(selected_with_salary_fb)
-            selected_without_salary_fb = random.sample(without_salary_fb, min(remaining_slots_after_fb_salary, len(without_salary_fb)))
+            selected_without_salary_fb = random.sample(without_salary_fb, min(remaining_slots_after_fb_salary, len(without_salary_fb))) if without_salary_fb else []
 
             # Объединяем результаты fallback
             selected_vacancies_fallback = selected_with_salary_fb + selected_without_salary_fb
@@ -240,19 +238,15 @@ def get_vacancies_for_publication(
             final_vacancies = selected_vacancies_main
             logger.info(f"  - Цель {target_count} достигнута на основном запросе.")
 
-
         # --- Сортировка итогового списка ---
-        # Сортировка: сначала вакансии с зарплатой (основные), отсортированные по убыванию, потом без зарплаты (основные),
-        # затем с зарплатой (fallback), отсортированные по убыванию, и без зарплаты (fallback).
-        # Но для случайности, можно перемешать весь список, или оставить как есть.
-        # Если важна сортировка по свежести в рамках fallback:
+        # Сохраняем случайный порядок из основного и fallback, но сначала сортируем по ЗП внутри групп
         selected_with_salary_main.sort(key=lambda x: x.get('salary_to_net', 0), reverse=True)
         selected_with_salary_fb.sort(key=lambda x: x.get('salary_to_net', 0), reverse=True)
-        # Сортировка по дате для fallback вакансий (свежие первые)
-        selected_with_salary_fb.sort(key=lambda x: x.get('first_seen_in_db', ''), reverse=True)
-        selected_without_salary_fb.sort(key=lambda x: x.get('first_seen_in_db', ''), reverse=True)
 
         # Финальный порядок: основные (с/без зп), fallback (с/без зп)
+        # Но для большей случайности, можно перемешать весь final_vacancies, если не важен приоритет основного/фоллбэка
+        # random.shuffle(final_vacancies) # Раскомментируйте, если нужна полная случайность
+
         final_sorted_list = (selected_with_salary_main + selected_without_salary_main +
                              selected_with_salary_fb + selected_without_salary_fb)
 
@@ -279,6 +273,7 @@ def get_vacancies_for_publication(
         import traceback
         traceback.print_exc()
         return []
+
 
 
 
