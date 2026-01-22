@@ -184,6 +184,10 @@ def get_vacancies_for_publication(
         # Проверяем, достигли ли цели
         current_selection_count = len(selected_vacancies_main)
 
+        # Инициализируем fallback-переменные пустыми списками, чтобы избежать UnboundLocalError
+        selected_with_salary_fb = []
+        selected_without_salary_fb = []
+
         if current_selection_count < target_count:
             logger.info(f"  - Цель {target_count} не достигнута ({current_selection_count}), запускаю fallback...")
             slots_needed = target_count - current_selection_count
@@ -240,6 +244,7 @@ def get_vacancies_for_publication(
 
         # --- Сортировка итогового списка ---
         # Сохраняем случайный порядок из основного и fallback, но сначала сортируем по ЗП внутри групп
+        # Эти переменные теперь всегда определены благодаря инициализации выше
         selected_with_salary_main.sort(key=lambda x: x.get('salary_to_net', 0), reverse=True)
         selected_with_salary_fb.sort(key=lambda x: x.get('salary_to_net', 0), reverse=True)
 
@@ -273,6 +278,7 @@ def get_vacancies_for_publication(
         import traceback
         traceback.print_exc()
         return []
+
 
 
 
